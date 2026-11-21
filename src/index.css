@@ -1,0 +1,121 @@
+/* Kinspirit theme tokens. Palette supplied by the owner (11 Nov 2026 moodboard):
+   #2C0107 #550416 #C42759 #D8D6D7 #C3C3C3 #ABABAB #797878
+   Dark mode follows the phone setting by default; a manual switch sets
+   data-theme="light" or data-theme="dark" on <html>. */
+
+:root {
+  /* Brand palette */
+  --ink: #2c0107;
+  --wine: #550416;
+  --rose: #c42759;
+  --mist: #d8d6d7;
+  --ash: #c3c3c3;
+  --smoke: #ababab;
+  --slate: #797878;
+  --white: #ffffff;
+
+  /* Semantic tokens (light) */
+  --bg: var(--white);
+  --bg-chat: #f4f2f3;
+  --surface: #f4f2f3;
+  --text: var(--ink);
+  --text-muted: #5f5a5b;
+  --primary: var(--rose);
+  --primary-pressed: #a31e49;
+  --on-primary: var(--white);
+  --accent: var(--rose);
+  --divider: var(--mist);
+  --input-bg: var(--white);
+  --input-border: var(--ash);
+  --error: #a3123f;
+  --sheet: var(--white);
+  --field: #f4f2f3;
+  --brand: var(--wine);
+  --pattern-ink: var(--ink);
+  --pattern-opacity: 0.06;
+
+  --font-heading: 'Fredoka', system-ui, sans-serif;
+  --font-body: 'Nunito', system-ui, sans-serif;
+
+  --radius: 14px;
+  --radius-pill: 999px;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: var(--ink);
+    --bg-chat: var(--ink);
+    --surface: var(--wine);
+    --text: var(--mist);
+    --text-muted: var(--smoke);
+    --primary-pressed: #a31e49;
+    --accent: #ff7a9c;
+    --divider: #6b2434;
+    --input-bg: var(--wine);
+    --input-border: var(--slate);
+    --error: #ff7a9c;
+    --sheet: #3e020e;
+    --field: var(--wine);
+    --brand: var(--mist);
+    --pattern-ink: var(--white);
+    --pattern-opacity: 0.07;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: var(--ink);
+  --bg-chat: var(--ink);
+  --surface: var(--wine);
+  --text: var(--mist);
+  --text-muted: var(--smoke);
+  --primary-pressed: #a31e49;
+  --accent: #ff7a9c;
+  --divider: #6b2434;
+  --input-bg: var(--wine);
+  --input-border: var(--slate);
+  --error: #ff7a9c;
+  --sheet: #3e020e;
+  --field: var(--wine);
+  --brand: var(--mist);
+  --pattern-ink: var(--white);
+  --pattern-opacity: 0.07;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+button {
+  font-family: var(--font-heading);
+}
+
+button {
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
