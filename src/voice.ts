@@ -27,6 +27,19 @@ function audio(): HTMLAudioElement {
   return a
 }
 
+/** Downloads a received voice note onto this device and tells the server (which clears its copy once everyone has it). */
+export async function saveReceivedVoice(m: Message): Promise<Blob> {
+  if (!m.file_path) throw new ApiError('gone', 'This voice note is no longer available.')
+  const blob = await downloadAudioFile(m.file_path)
+  await saveVoice(m.id, blob)
+  idSubs.forEach((f) => f())
+  const path = m.file_path
+  void audioSaved(m.id)
+    .then((all) => (all ? deleteServerFile(path) : undefined))
+    .catch(() => {})
+  return blob
+}
+
 export async function playVoice(m: Message) {
   const a = audio()
   if (st.id === m.id && a.src) {
@@ -42,13 +55,7 @@ export async function playVoice(m: Message) {
   if (!blob) {
     if (!m.file_path) return set({ id: '', loading: false, errorId: m.id, error: 'This voice note is no longer available.' })
     try {
-      blob = await downloadAudioFile(m.file_path)
-      await saveVoice(m.id, blob)
-      idSubs.forEach((f) => f())
-      const path = m.file_path
-      void audioSaved(m.id)
-        .then((all) => (all ? deleteServerFile(path) : undefined))
-        .catch(() => {})
+      blob = await saveReceivedVoice(m)
     } catch (e) {
       return set({ id: '', loading: false, errorId: m.id, error: e instanceof ApiError ? e.message : 'Could not load the voice note.' })
     }

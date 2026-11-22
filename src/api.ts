@@ -281,6 +281,24 @@ export async function listReceivedAudio(): Promise<AudioMessage[]> {
 }
 
 export const downloadAudioFile = (path: string) => storage.downloadFile(path)
+
+/** Usernames for some people, by id. */
+export async function usernames(ids: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  if (!ids.length) return out
+  const ps = await db.select<{ id: string; username: string }>(`profiles?id=in.(${ids.join(',')})&select=id,username`)
+  ps.forEach((p) => out.set(p.id, p.username))
+  return out
+}
+
+/** Voice notes and audio files that others sent me recently, in any of my chats. */
+export async function listIncomingMedia(days = 30): Promise<Message[]> {
+  const me = myId()
+  const since = encodeURIComponent(new Date(Date.now() - days * 86400000).toISOString())
+  return db.select<Message>(
+    `messages?kind=in.(audio,voice)&deleted_at=is.null&sender_id=neq.${me}&created_at=gte.${since}&file_path=not.is.null&order=created_at.desc&limit=60&select=${MESSAGE_COLUMNS}`,
+  )
+}
 export const deleteServerFile = (path: string) => storage.deleteFile(path)
 
 

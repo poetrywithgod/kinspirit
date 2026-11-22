@@ -20,7 +20,7 @@ function goneSet(): Set<string> {
     return new Set()
   }
 }
-function markGone(id: string) {
+export function markGone(id: string) {
   try {
     const s = goneSet()
     s.add(id)
@@ -31,7 +31,7 @@ function markGone(id: string) {
 }
 export const isGone = (id: string) => goneSet().has(id)
 
-function probeDuration(blob: Blob): Promise<number> {
+export function probeDuration(blob: Blob): Promise<number> {
   return new Promise((resolve) => {
     const url = URL.createObjectURL(blob)
     const a = new Audio()
@@ -78,6 +78,31 @@ export async function downloadAudio(m: Message, from: string): Promise<void> {
   void audioSaved(m.id)
     .then((all) => (all ? deleteServerFile(path) : undefined))
     .catch(() => {})
+}
+
+/** Keeps the sender's own copy of an audio file, so it never becomes unavailable. */
+export async function keepOwnAudio(id: string, file: File, conversation_id: string) {
+  const blob = withAudioType(file, file.name)
+  const duration = await probeDuration(blob)
+  await saveAudio({ id, name: file.name, from: '', conversation_id, size: file.size, duration, added_at: Date.now() }, blob)
+  notify()
+}
+
+const autoKey = () => `kinspirit.autosave.audio.${myId()}`
+/** Audio files (not voice notes) are saved automatically unless the person switches it off to save data. */
+export const autoSaveAudio = (): boolean => {
+  try {
+    return localStorage.getItem(autoKey()) !== 'off'
+  } catch {
+    return true
+  }
+}
+export const setAutoSaveAudio = (on: boolean) => {
+  try {
+    localStorage.setItem(autoKey(), on ? 'on' : 'off')
+  } catch {
+    // storage blocked
+  }
 }
 
 export async function removeAudio(id: string) {

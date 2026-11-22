@@ -12,6 +12,9 @@ import { CallLayer } from './CallScreen'
 import { ContactsTab } from './ContactsTab'
 import { MeetingsTab } from './MeetingsTab'
 import { SettingsTab } from './SettingsTab'
+import { syncIncomingMedia } from '../mediaSync'
+import { protectStorage } from '../storage'
+import { usePolling } from '../usePolling'
 import { ChatIcon, GearIcon, MeetingIcon, MusicIcon, PeopleIcon } from './icons'
 
 type Tab = 'chats' | 'meetings' | 'contacts' | 'audio' | 'settings'
@@ -40,6 +43,10 @@ function Shell({
     leaveCall()
     logout()
   }
+  useEffect(() => {
+    void protectStorage()
+  }, [])
+  usePolling(() => syncIncomingMedia(), 15000)
   const [tab, setTab] = useState<Tab>('chats')
   const [chat, setChat] = useState<ChatTarget | null>(null)
   const [menu, setMenu] = useState(false)

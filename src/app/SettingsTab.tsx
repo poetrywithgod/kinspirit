@@ -1,4 +1,7 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { autoSaveAudio, onLibraryChange, setAutoSaveAudio } from '../library'
+import { protectStorage, storageInfo, type StorageInfo } from '../storage'
+import { fmtSize } from '../time'
 import { ApiError, updateAvatar } from '../api'
 import { PhotoCropper } from '../PhotoCropper'
 import { applyTheme, getTheme, type ThemePref } from '../theme'
@@ -21,6 +24,18 @@ export function SettingsTab({
   onAvatarChange: (url: string) => void
   onLogout: () => void
 }) {
+  const [info, setInfo] = useState<StorageInfo | null>(null)
+  const [autoAudio, setAutoAudio] = useState(autoSaveAudio())
+  useEffect(() => {
+    let dead = false
+    const load = () => void storageInfo().then((i) => !dead && setInfo(i))
+    void protectStorage().then(load)
+    const off = onLibraryChange(load)
+    return () => {
+      dead = true
+      off()
+    }
+  }, [])
   const fileRef = useRef<HTMLInputElement>(null)
   const [cropFile, setCropFile] = useState<File | null>(null)
   const [photoBusy, setPhotoBusy] = useState(false)
@@ -80,6 +95,33 @@ export function SettingsTab({
           <p className="muted">{photoBusy ? 'Saving your photo…' : 'Tap your photo to change it'}</p>
           {photoMsg && <p className={photoMsg === 'Photo updated.' ? 'muted' : 'error'}>{photoMsg}</p>}
         </div>
+      </div>
+
+      <div className="settings-card">
+        <h2 className="section-title flush">Saved on this phone</h2>
+        <p className="muted">
+          Voice notes and audio you receive are saved on this phone automatically. They stay here until you delete them.
+          {info ? ` ${info.files} saved file${info.files === 1 ? '' : 's'}, ${fmtSize(info.used)} used.` : ''}
+        </p>
+        {info && info.persisted === false && (
+          <p className="muted">
+            {info.installed
+              ? 'Your browser has not yet promised to keep these files. Keep using the app and it usually will.'
+              : 'Add Kinspirit to your Home Screen (menu → Install app / Add to Home Screen). Browsers may clear saved files from a website that is not installed.'}
+          </p>
+        )}
+        {info && info.persisted && <p className="muted">✓ Protected: this phone will not clear them to free up space.</p>}
+        <label className="switch-row">
+          <input
+            type="checkbox"
+            checked={autoAudio}
+            onChange={(e) => {
+              setAutoAudio(e.target.checked)
+              setAutoSaveAudio(e.target.checked)
+            }}
+          />
+          <span>Save audio files automatically (uses data; voice notes are always saved)</span>
+        </label>
       </div>
 
       <div className="settings-card">

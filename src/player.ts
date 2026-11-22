@@ -140,7 +140,7 @@ async function load(index: number, autoplay = true) {
     )
 }
 
-const toTrack = (m: AudioMeta): Track => ({ id: m.id, title: m.name, artist: `@${m.from}` })
+const toTrack = (m: AudioMeta): Track => ({ id: m.id, title: m.name, artist: m.from ? `@${m.from}` : 'You' })
 
 /** Plays `id`, with everything in `list` (or the whole library) as the queue. */
 export async function play(id: string, list?: AudioMeta[]) {

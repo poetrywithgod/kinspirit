@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ApiError, MAX_AUDIO_BYTES, audioPath, deleteMessage, editMessage, fetchMessages, markRead, myId, sendAudio, sendMessage, sendVoice, groupMembers, type Message } from '../api'
-import { downloadAudio, useLibrary } from '../library'
+import { downloadAudio, keepOwnAudio, useLibrary } from '../library'
+import { syncIncomingMedia } from '../mediaSync'
 import { currentTrack, play, toggle, usePlayer } from '../player'
 import { fmtSize } from '../time'
 import { MiniPlayer } from './MiniPlayer'
@@ -125,7 +126,10 @@ export function ChatView({
         const known = new Map(messagesRef.current.map((m) => [m.id, m]))
         const changed = rows.filter((r) => known.get(r.id)?.updated_at !== r.updated_at)
         if (changed.length) setMessages((cur) => merge(cur, changed))
-        if (rows.some((m) => m.sender_id !== me && !known.has(m.id))) void markRead(chat.id).catch(() => {})
+        if (rows.some((m) => m.sender_id !== me && !known.has(m.id))) {
+          void markRead(chat.id).catch(() => {})
+          void syncIncomingMedia() // new voice notes and audio are saved to this phone right away
+        }
       }
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Could not load messages.')
@@ -263,6 +267,7 @@ export function ChatView({
     setError('')
     const id = newId()
     files.current.set(id, file)
+    void keepOwnAudio(id, file, chat.id).catch(() => {})
     const m: Message = {
       id,
       conversation_id: chat.id,
@@ -461,7 +466,7 @@ export function ChatView({
                   <VoiceBubble m={m} mine={mine} local={voiceIds.has(m.id)} />
                 ) : m.kind === 'audio' ? (
                   <span className="audio-card">
-                    {!mine && have.has(m.id) ? (
+                    {have.has(m.id) ? (
                       <button
                         type="button"
                         className="audio-btn"
@@ -490,7 +495,7 @@ export function ChatView({
                       <span className="audio-sub">
                         {m.file_size ? fmtSize(m.file_size) : 'Audio'}
                         {!mine && !have.has(m.id) && (saving.has(m.id) ? ' · Saving…' : ' · Tap to save')}
-                        {!mine && have.has(m.id) && ' · On your phone'}
+                        {have.has(m.id) && ' · On your phone'}
                       </span>
                       {notes[m.id] && <span className="audio-sub warn">{notes[m.id]}</span>}
                     </span>

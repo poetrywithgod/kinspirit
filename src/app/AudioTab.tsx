@@ -159,7 +159,7 @@ export function AudioTab() {
                 <span className="row-main">
                   <span className="row-name">{it.name}</span>
                   <span className="row-preview">
-                    @{it.from} · {fmtDur(it.duration)} · {fmtSize(it.size)}
+                    {it.from ? `@${it.from}` : 'You'} · {fmtDur(it.duration)} · {fmtSize(it.size)}
                   </span>
                 </span>
               </button>
