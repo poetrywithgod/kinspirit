@@ -1858,3 +1858,97 @@ html.in-call .chat {
 .ctl:disabled {
   opacity: 0.5;
 }
+
+/* ---- message actions: reply, edit, delete ---- */
+.bubble { position: relative; }
+.bubble.deleted { opacity: 0.75; }
+.deleted-text { font-style: italic; font-size: 14px; }
+.bubble-more {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  opacity: 0.55;
+}
+.bubble-more svg { width: 16px; height: 16px; }
+.bubble-row.flash .bubble { outline: 2px solid var(--accent, #c42759); }
+.quote {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin: 0 0 6px;
+  padding: 6px 10px;
+  border: 0;
+  border-left: 3px solid currentColor;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.12);
+  color: inherit;
+  font: inherit;
+}
+.quote-who { display: block; font: 600 12px var(--font-heading); opacity: 0.9; }
+.quote-text {
+  display: block;
+  font-size: 13px;
+  opacity: 0.85;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.compose-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 6px 14px;
+  background: var(--sheet);
+  border-top: 1px solid var(--divider);
+  border-left: 4px solid var(--primary);
+}
+.compose-banner-body { flex: 1; min-width: 0; color: var(--text); }
+.compose-banner .quote-who { color: var(--primary); }
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+.sheet {
+  width: min(100%, 520px);
+  background: var(--sheet);
+  color: var(--text);
+  border-radius: 20px 20px 0 0;
+  padding: 10px 10px max(14px, env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sheet button {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+  font: 600 16px var(--font-body);
+  text-align: left;
+}
+.sheet button svg { width: 22px; height: 22px; flex: none; }
+.sheet button:active { background: var(--divider); }
+.sheet .danger { color: var(--error); }
+.sheet .cancel { justify-content: center; color: var(--text-muted); }
+.sheet-title { margin: 8px 14px 6px; font: 600 16px var(--font-heading); }

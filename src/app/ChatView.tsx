@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { ApiError, MAX_AUDIO_BYTES, audioPath, fetchMessages, markRead, myId, sendAudio, sendMessage, sendVoice, groupMembers, type Message } from '../api'
+import { ApiError, MAX_AUDIO_BYTES, audioPath, deleteMessage, editMessage, fetchMessages, markRead, myId, sendAudio, sendMessage, sendVoice, groupMembers, type Message } from '../api'
 import { downloadAudio, useLibrary } from '../library'
 import { currentTrack, play, toggle, usePlayer } from '../player'
 import { fmtSize } from '../time'
@@ -15,7 +15,7 @@ import { clock } from '../time'
 import { usePolling } from '../usePolling'
 import { Avatar } from './Avatar'
 import type { ChatTarget } from './ChatsTab'
-import { BackIcon, ClipIcon, MicIcon, PhoneIcon, TrashIcon, DownloadIcon, MusicIcon, PauseIcon, PlayIcon, SendIcon } from './icons'
+import { BackIcon, ChevronDownIcon, ClipIcon, CloseIcon, CopyIcon, EditIcon, MicIcon, PhoneIcon, ReplyIcon, TrashIcon, DownloadIcon, MusicIcon, PauseIcon, PlayIcon, SendIcon } from './icons'
 
 const newId = () =>
   typeof crypto.randomUUID === 'function'
@@ -43,6 +43,14 @@ function merge(a: Message[], b: Message[]): Message[] {
   )
 }
 
+function preview(m: Message | undefined): string {
+  if (!m) return 'Original message'
+  if (m.deleted_at) return '🚫 Message deleted'
+  if (m.kind === 'voice') return '🎤 Voice note'
+  if (m.kind === 'audio') return `🎵 ${m.file_name ?? m.body}`
+  return m.body.length > 120 ? `${m.body.slice(0, 120)}…` : m.body
+}
+
 export function ChatView({
   chat,
   onBack,
@@ -56,6 +64,12 @@ export function ChatView({
   const isGroup = chat.kind === 'group'
   const [info, setInfo] = useState(false)
   const [names, setNames] = useState<Map<string, string>>(new Map())
+  const [amAdmin, setAmAdmin] = useState(false)
+  const [replyTo, setReplyTo] = useState<Message | null>(null)
+  const [editing, setEditing] = useState<Message | null>(null)
+  const [menu, setMenu] = useState<Message | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<Message | null>(null)
+  const [busy, setBusy] = useState(false)
   const asked = useRef(0)
   const [messages, setMessages] = useState<Message[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -105,11 +119,11 @@ export function ChatView({
       setLoaded(true)
       setError('')
       if (rows.length) {
-        const newest = rows[rows.length - 1].created_at
+        const newest = rows.reduce((t, r) => ((r.updated_at ?? r.created_at) > t ? (r.updated_at ?? r.created_at) : t), '')
         if (!cursor.current || newest > cursor.current) cursor.current = newest
         // The look-back re-fetches a few recent rows; only react to what is new or changed.
         const known = new Map(messagesRef.current.map((m) => [m.id, m]))
-        const changed = rows.filter((r) => known.get(r.id)?.created_at !== r.created_at)
+        const changed = rows.filter((r) => known.get(r.id)?.updated_at !== r.updated_at)
         if (changed.length) setMessages((cur) => merge(cur, changed))
         if (rows.some((m) => m.sender_id !== me && !known.has(m.id))) void markRead(chat.id).catch(() => {})
       }
@@ -130,7 +144,10 @@ export function ChatView({
     if ((names.size === 0 || unknown) && Date.now() - asked.current > 10000) {
       asked.current = Date.now()
       groupMembers(chat.id)
-        .then((ms) => setNames(new Map(ms.map((x) => [x.id, x.username]))))
+        .then((ms) => {
+          setNames(new Map(ms.map((x) => [x.id, x.username])))
+          setAmAdmin(ms.some((x) => x.id === me && x.role === 'admin'))
+        })
         .catch(() => {})
     }
   }, [isGroup, messages, names, chat.id, me])
@@ -154,7 +171,7 @@ export function ChatView({
           ? sendVoice({ id: m.id, conversation_id: m.conversation_id, blob: vo.blob, seconds: vo.seconds })
           : m.kind === 'audio' && file
           ? sendAudio({ id: m.id, conversation_id: m.conversation_id, file })
-          : sendMessage({ id: m.id, conversation_id: m.conversation_id, body: m.body })
+          : sendMessage({ id: m.id, conversation_id: m.conversation_id, body: m.body, reply_to: m.reply_to })
       job
         .then(() => {
           setMessages((cur) => cur.map((x) => (x.id === m.id ? { ...x, status: undefined } : x)))
@@ -170,18 +187,72 @@ export function ChatView({
   const send = () => {
     const body = text.trim()
     if (!body) return
+    if (editing) return void saveEdit(body)
     const m: Message = {
       id: newId(),
       conversation_id: chat.id,
       sender_id: me,
       body,
       created_at: new Date().toISOString(),
+      reply_to: replyTo?.id ?? null,
       status: 'sending',
     }
     stick.current = true
     setMessages((cur) => merge(cur, [m]))
     setText('')
+    setReplyTo(null)
     push(m)
+  }
+
+  const saveEdit = async (body: string) => {
+    const target = editing
+    if (!target) return
+    if (body === target.body) {
+      setEditing(null)
+      setText('')
+      return
+    }
+    setBusy(true)
+    try {
+      await editMessage(target.id, body)
+      setMessages((cur) => cur.map((x) => (x.id === target.id ? { ...x, body, edited_at: new Date().toISOString() } : x)))
+      setEditing(null)
+      setText('')
+      setError('')
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not edit that message.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const doDelete = async (target: Message) => {
+    setConfirmDelete(null)
+    setBusy(true)
+    try {
+      await deleteMessage(target.id)
+      setMessages((cur) => cur.map((x) => (x.id === target.id ? { ...x, deleted_at: new Date().toISOString() } : x)))
+      if (replyTo?.id === target.id) setReplyTo(null)
+      if (editing?.id === target.id) {
+        setEditing(null)
+        setText('')
+      }
+      setError('')
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not delete that message.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const who = (id: string) => (id === me ? 'You' : isGroup ? `@${names.get(id) ?? '…'}` : chat.name)
+
+  const jumpTo = (id: string) => {
+    const el = list.current?.querySelector<HTMLElement>(`[data-mid="${id}"]`)
+    if (!el) return
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    el.classList.add('flash')
+    window.setTimeout(() => el.classList.remove('flash'), 1200)
   }
 
   const pickAudio = (file: File | undefined) => {
@@ -357,12 +428,34 @@ export function ChatView({
             )
           }
           return (
-            <div key={m.id} className={`bubble-row${mine ? ' mine' : ''}`}>
-              <div className={`bubble${mine ? ' mine' : ''}${m.status === 'failed' ? ' failed' : ''}`}>
+            <div key={m.id} data-mid={m.id} className={`bubble-row${mine ? ' mine' : ''}`}>
+              <div
+                className={`bubble${mine ? ' mine' : ''}${m.status === 'failed' ? ' failed' : ''}${m.deleted_at ? ' deleted' : ''}`}
+                onContextMenu={(e) => {
+                  if (m.deleted_at || m.status) return
+                  e.preventDefault()
+                  setMenu(m)
+                }}
+              >
+                {!m.deleted_at && !m.status && (
+                  <button type="button" className="bubble-more" aria-label="Message options" onClick={() => setMenu(m)}>
+                    <ChevronDownIcon />
+                  </button>
+                )}
                 {isGroup && !mine && (
                   <span className="sender" style={{ color: senderColor(m.sender_id) }}>
                     @{names.get(m.sender_id) ?? '…'}
                   </span>
+                )}
+                {m.deleted_at ? (
+                  <span className="bubble-text deleted-text">🚫 {mine ? 'You deleted this message' : 'This message was deleted'}</span>
+                ) : (
+                  <>
+                {m.reply_to && (
+                  <button type="button" className="quote" onClick={() => jumpTo(m.reply_to!)}>
+                    <span className="quote-who">{who(messages.find((x) => x.id === m.reply_to)?.sender_id ?? '')}</span>
+                    <span className="quote-text">{preview(messages.find((x) => x.id === m.reply_to))}</span>
+                  </button>
                 )}
                 {m.kind === 'voice' ? (
                   <VoiceBubble m={m} mine={mine} local={voiceIds.has(m.id)} />
@@ -405,8 +498,10 @@ export function ChatView({
                 ) : (
                   <span className="bubble-text">{m.body}</span>
                 )}
+                  </>
+                )}
                 <span className="bubble-meta">
-                  {m.status === 'sending' ? 'Sending…' : m.status === 'failed' ? '' : clock(m.created_at)}
+                  {m.status === 'sending' ? 'Sending…' : m.status === 'failed' ? '' : `${m.edited_at && !m.deleted_at ? 'Edited · ' : ''}${clock(m.created_at)}`}
                   {m.status === 'failed' && (
                     <button type="button" className="retry" onClick={() => retry(m)}>
                       Not sent. Tap to retry
@@ -418,6 +513,103 @@ export function ChatView({
           )
         })}
       </div>
+
+      {(replyTo || editing) && !rec && (
+        <div className="compose-banner">
+          <span className="compose-banner-body">
+            <span className="quote-who">{editing ? 'Editing message' : `Replying to ${who(replyTo!.sender_id)}`}</span>
+            <span className="quote-text">{preview(editing ?? replyTo!)}</span>
+          </span>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Cancel"
+            onClick={() => {
+              if (editing) setText('')
+              setEditing(null)
+              setReplyTo(null)
+            }}
+          >
+            <CloseIcon />
+          </button>
+        </div>
+      )}
+
+      {menu && (
+        <div className="sheet-backdrop" role="presentation" onClick={() => setMenu(null)}>
+          <div className="sheet" role="menu" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setEditing(null)
+                setReplyTo(menu)
+                setMenu(null)
+              }}
+            >
+              <ReplyIcon /> Reply
+            </button>
+            {menu.kind === 'text' && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(menu.body).catch(() => {})
+                  setMenu(null)
+                }}
+              >
+                <CopyIcon /> Copy
+              </button>
+            )}
+            {menu.kind === 'text' && menu.sender_id === me && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setReplyTo(null)
+                  setEditing(menu)
+                  setText(menu.body)
+                  setMenu(null)
+                }}
+              >
+                <EditIcon /> Edit
+              </button>
+            )}
+            {(menu.sender_id === me || (isGroup && amAdmin)) && (
+              <button
+                type="button"
+                role="menuitem"
+                className="danger"
+                onClick={() => {
+                  setConfirmDelete(menu)
+                  setMenu(null)
+                }}
+              >
+                <TrashIcon /> Delete for everyone
+              </button>
+            )}
+            <button type="button" role="menuitem" className="cancel" onClick={() => setMenu(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {confirmDelete && (
+        <div className="sheet-backdrop" role="presentation" onClick={() => setConfirmDelete(null)}>
+          <div className="sheet" role="alertdialog" aria-label="Delete message" onClick={(e) => e.stopPropagation()}>
+            <p className="sheet-title">
+              {confirmDelete.sender_id === me ? 'Delete this message for everyone?' : `Delete @${names.get(confirmDelete.sender_id) ?? 'this person'}'s message for everyone?`}
+            </p>
+            <button type="button" className="danger" disabled={busy} onClick={() => void doDelete(confirmDelete)}>
+              <TrashIcon /> Delete
+            </button>
+            <button type="button" className="cancel" onClick={() => setConfirmDelete(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {rec ? (
         <div className="composer recording" role="status" aria-label="Recording a voice note">

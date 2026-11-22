@@ -170,3 +170,32 @@ export const DownIcon = () => (
     <path d="M6 9l6 6 6-6" />
   </svg>
 )
+
+export const ReplyIcon = () => (
+  <svg {...base}>
+    <path d="M9 7L4 12l5 5" />
+    <path d="M4 12h9a7 7 0 0 1 7 7v0" />
+  </svg>
+)
+export const EditIcon = () => (
+  <svg {...base}>
+    <path d="M4 20h4L19 9a2.1 2.1 0 0 0-4-4L4 16z" />
+    <path d="M13.5 6.5l4 4" />
+  </svg>
+)
+export const CopyIcon = () => (
+  <svg {...base}>
+    <rect x="8" y="8" width="12" height="12" rx="2.5" />
+    <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+  </svg>
+)
+export const CloseIcon = () => (
+  <svg {...base}>
+    <path d="M6 6l12 12M18 6L6 18" />
+  </svg>
+)
+export const ChevronDownIcon = () => (
+  <svg {...base}>
+    <path d="M6 9l6 6 6-6" />
+  </svg>
+)

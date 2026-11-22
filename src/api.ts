@@ -145,6 +145,10 @@ export type Message = {
   file_path?: string | null
   file_name?: string | null
   file_size?: number | null
+  reply_to?: string | null
+  edited_at?: string | null
+  deleted_at?: string | null
+  updated_at?: string
   status?: 'sending' | 'failed'
 }
 
@@ -158,13 +162,14 @@ export const startChat = (other: string) => db.rpc<string>('start_direct_chat', 
 export const listConversations = () => db.rpc<Conversation[]>('my_conversations', {})
 export const markRead = async (cid: string) => void (await db.rpc<unknown>('mark_read', { cid }))
 
-const MESSAGE_COLUMNS = 'id,conversation_id,sender_id,body,created_at,kind,file_path,file_name,file_size,duration'
+const MESSAGE_COLUMNS =
+  'id,conversation_id,sender_id,body,created_at,kind,file_path,file_name,file_size,duration,reply_to,edited_at,deleted_at,updated_at'
 
 /** First call: the latest 100 messages. With `after`: only messages newer than that time. */
 export async function fetchMessages(cid: string, after?: string): Promise<Message[]> {
   if (after) {
     return db.select<Message>(
-      `messages?conversation_id=eq.${cid}&created_at=gte.${encodeURIComponent(after)}&order=created_at.asc&limit=200&select=${MESSAGE_COLUMNS}`,
+      `messages?conversation_id=eq.${cid}&updated_at=gte.${encodeURIComponent(after)}&order=updated_at.asc&limit=200&select=${MESSAGE_COLUMNS}`,
     )
   }
   const rows = await db.select<Message>(
@@ -174,11 +179,11 @@ export async function fetchMessages(cid: string, after?: string): Promise<Messag
 }
 
 /** Sending the same message id twice is safe, so retrying never makes duplicates. */
-export async function sendMessage(m: { id: string; conversation_id: string; body: string; kind?: 'text' | 'call' }): Promise<void> {
+export async function sendMessage(m: { id: string; conversation_id: string; body: string; kind?: 'text' | 'call'; reply_to?: string | null }): Promise<void> {
   const s = currentSession()
   if (!s) throw new ApiError('no_session', 'Please log in again.')
   try {
-    await db.insert('messages', { id: m.id, conversation_id: m.conversation_id, sender_id: s.user.id, body: m.body, ...(m.kind ? { kind: m.kind } : {}) })
+    await db.insert('messages', { id: m.id, conversation_id: m.conversation_id, sender_id: s.user.id, body: m.body, ...(m.kind ? { kind: m.kind } : {}), ...(m.reply_to ? { reply_to: m.reply_to } : {}) })
   } catch (e) {
     if (e instanceof ApiError && e.code === '23505') return
     throw e
@@ -222,7 +227,7 @@ export type AudioMessage = Message & { from: string }
 export async function listReceivedAudio(): Promise<AudioMessage[]> {
   const me = myId()
   const rows = await db.select<Message>(
-    `messages?kind=eq.audio&sender_id=neq.${me}&order=created_at.desc&limit=100&select=${MESSAGE_COLUMNS}`,
+    `messages?kind=eq.audio&deleted_at=is.null&sender_id=neq.${me}&order=created_at.desc&limit=100&select=${MESSAGE_COLUMNS}`,
   )
   const ids = [...new Set(rows.map((r) => r.sender_id))]
   const names = new Map<string, string>()
@@ -290,3 +295,14 @@ export const callStatus = (cid: string) =>
   functions.invoke<{ active: boolean; count: number }>('livekit-token', { action: 'status', cid })
 export const callHost = (cid: string, action: 'mute_all' | 'lock_all' | 'unlock_all' | 'remove', identity?: string) =>
   functions.invoke<{ ok: boolean }>('livekit-token', { action, cid, identity })
+
+
+// ---- edit and delete ----
+export const editMessage = async (mid: string, body: string) =>
+  void (await db.rpc<unknown>('edit_message', { mid, new_body: body }))
+
+/** Deletes for everyone. Also removes the file from storage when there was one. */
+export async function deleteMessage(mid: string): Promise<void> {
+  const path = await db.rpc<string | null>('delete_message', { mid })
+  if (path) await storage.deleteFile(path).catch(() => undefined)
+}

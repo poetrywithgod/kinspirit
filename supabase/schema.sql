@@ -554,3 +554,105 @@ as $$
 $$;
 revoke all on function public.call_info(uuid) from public;
 grant execute on function public.call_info(uuid) to authenticated;
+
+-- 8. Reply, edit and delete ---------------------------------------------------
+-- updated_at moves forward on every edit or delete, so the app's polling sees changes.
+alter table public.messages add column if not exists reply_to   uuid references public.messages (id) on delete set null;
+alter table public.messages add column if not exists edited_at  timestamptz;
+alter table public.messages add column if not exists deleted_at timestamptz;
+alter table public.messages add column if not exists updated_at timestamptz not null default now();
+create index if not exists messages_updated_idx on public.messages (conversation_id, updated_at);
+
+grant insert (id, conversation_id, sender_id, body, kind, file_path, file_name, file_size, duration, reply_to)
+  on public.messages to authenticated;
+
+-- Edit my own text message.
+create or replace function public.edit_message(mid uuid, new_body text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare n integer;
+begin
+  if auth.uid() is null then raise exception 'not signed in'; end if;
+  new_body := btrim(coalesce(new_body, ''));
+  if char_length(new_body) not between 1 and 4000 then raise exception 'empty message'; end if;
+  update public.messages
+     set body = new_body, edited_at = now(), updated_at = now()
+   where id = mid and sender_id = auth.uid() and kind = 'text' and deleted_at is null
+     and public.is_member(conversation_id);
+  get diagnostics n = row_count;
+  if n = 0 then raise exception 'cannot edit this message'; end if;
+end;
+$$;
+
+-- Delete for everyone: the sender can delete their own; in a group, admins can delete anyone's.
+-- Returns the file path (if any) so the app can remove the file from storage.
+create or replace function public.delete_message(mid uuid)
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare m public.messages%rowtype; allowed boolean;
+begin
+  if auth.uid() is null then raise exception 'not signed in'; end if;
+  select * into m from public.messages where id = mid;
+  if not found or not public.is_member(m.conversation_id) then raise exception 'message not found'; end if;
+  allowed := m.sender_id = auth.uid() or exists (
+    select 1 from public.conversation_members cm join public.conversations c on c.id = cm.conversation_id
+    where cm.conversation_id = m.conversation_id and cm.user_id = auth.uid() and cm.role = 'admin' and c.kind = 'group'
+  );
+  if not allowed then raise exception 'not allowed'; end if;
+  if m.deleted_at is not null then return null; end if;
+  update public.messages set deleted_at = now(), updated_at = now() where id = mid;
+  return m.file_path;
+end;
+$$;
+
+-- Chat list: deleted messages show as "Message deleted".
+drop function if exists public.my_conversations();
+create or replace function public.my_conversations()
+returns table (
+  id uuid, kind text, title text, last_message_at timestamptz,
+  other_id uuid, other_username text, other_avatar text,
+  last_body text, last_sender uuid, last_sender_name text, unread integer
+)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select c.id, c.kind, c.title, c.last_message_at,
+         o.user_id, p.username, p.avatar_url,
+         coalesce(lm.body, 'Group created'), lm.sender_id, lp.username,
+         (select count(*)::integer from public.messages m
+           where m.conversation_id = c.id and m.sender_id <> auth.uid() and m.deleted_at is null and m.created_at > me.last_read_at)
+  from public.conversation_members me
+  join public.conversations c on c.id = me.conversation_id
+  left join lateral (
+    select case when m.deleted_at is not null then '🚫 Message deleted'
+                when m.kind = 'audio' then '🎵 ' || m.body when m.kind = 'voice' then '🎤 Voice note'
+                when m.kind = 'call' then '📞 Call' else m.body end as body, m.sender_id
+    from public.messages m
+    where m.conversation_id = c.id order by m.created_at desc limit 1
+  ) lm on true
+  left join lateral (
+    select x.user_id from public.conversation_members x
+    where x.conversation_id = c.id and x.user_id <> auth.uid() and c.kind = 'direct' limit 1
+  ) o on true
+  left join public.profiles p on p.id = o.user_id
+  left join public.profiles lp on lp.id = lm.sender_id
+  where me.user_id = auth.uid() and (lm.sender_id is not null or c.kind = 'group')
+  order by c.last_message_at desc;
+$$;
+
+do $$
+declare f text;
+begin
+  foreach f in array array['my_conversations()', 'edit_message(uuid, text)', 'delete_message(uuid)'] loop
+    execute format('revoke all on function public.%s from public', f);
+    execute format('grant execute on function public.%s to authenticated', f);
+  end loop;
+end $$;
