@@ -386,10 +386,33 @@ export const storage = {
       })
     } catch (e) {
       if (e instanceof ApiError && /exceeded|too large|maximum/i.test(e.message)) {
-        throw new ApiError('too_large', 'That file is too big. The limit is 20 MB.')
+        throw new ApiError('too_large', 'That file is too big. The limit is 50 MB.')
       }
       return setupHint(e)
     }
+  },
+
+  /** Same as uploadFile, but reports how much has been sent (0 to 1), for big photos and videos. */
+  async uploadFileWithProgress(path: string, file: Blob, contentType: string, onProgress: (f: number) => void): Promise<void> {
+    const token = await accessToken()
+    await new Promise<void>((resolve, reject) => {
+      const x = new XMLHttpRequest()
+      x.open('POST', `${SUPABASE_URL}/storage/v1/object/chat-files/${path}`)
+      x.setRequestHeader('apikey', SUPABASE_KEY)
+      x.setRequestHeader('Authorization', `Bearer ${token}`)
+      x.setRequestHeader('Content-Type', contentType)
+      x.setRequestHeader('x-upsert', 'true')
+      x.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total)
+      x.onerror = () => reject(new ApiError('network', 'Cannot reach the server. Check your internet and try again.'))
+      x.onload = () => {
+        if (x.status >= 200 && x.status < 300) return resolve()
+        if (x.status === 413 || /exceeded|too large|maximum/i.test(x.responseText)) {
+          return reject(new ApiError('too_large', 'That file is too big. The limit is 50 MB.'))
+        }
+        reject(new ApiError(`http_${x.status}`, 'Could not send the file. Try again.', x.status))
+      }
+      x.send(file)
+    })
   },
 
   async downloadFile(path: string): Promise<Blob> {

@@ -10,6 +10,7 @@ import {
 import { Avatar } from './Avatar'
 import type { ChatTarget } from './ChatsTab'
 import { SearchIcon } from './icons'
+import { ProfileView } from './ProfileView'
 
 let cache: Person[] | null = null
 
@@ -19,6 +20,7 @@ export function ContactsTab({ onOpen, autoFocus }: { onOpen: (c: ChatTarget) => 
   const [results, setResults] = useState<Person[] | null>(null)
   const [searching, setSearching] = useState(false)
   const [busy, setBusy] = useState('')
+  const [profile, setProfile] = useState<Person | null>(null)
   const [error, setError] = useState('')
   const input = useRef<HTMLInputElement>(null)
 
@@ -73,7 +75,7 @@ export function ContactsTab({ onOpen, autoFocus }: { onOpen: (c: ChatTarget) => 
     setError('')
     try {
       const id = await startChat(p.id)
-      onOpen({ id, name: `@${p.username}`, avatar: p.avatar_url })
+      onOpen({ id, name: `@${p.username}`, avatar: p.avatar_url, userId: p.id })
     } catch (e) {
       fail(e)
     } finally {
@@ -135,10 +137,27 @@ export function ContactsTab({ onOpen, autoFocus }: { onOpen: (c: ChatTarget) => 
         {list.map((p) => (
           <li key={p.id} className="row person">
             <button type="button" className="row-hit" disabled={busy === p.id} onClick={() => void open(p)}>
-              <Avatar src={p.avatar_url} name={p.username} />
+              <span
+                role="button"
+                tabIndex={0}
+                aria-label={`View @${p.username}'s profile`}
+                className="avatar-tap"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setProfile(p)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.stopPropagation()
+                    setProfile(p)
+                  }
+                }}
+              >
+                <Avatar src={p.avatar_url} name={p.username} />
+              </span>
               <span className="row-main">
                 <span className="row-name">@{p.username}</span>
-                <span className="row-preview">Tap to chat</span>
+                <span className="row-preview">Tap to chat · tap the photo for their profile</span>
               </span>
             </button>
             {showingResults && !known.has(p.id) && (
@@ -149,6 +168,16 @@ export function ContactsTab({ onOpen, autoFocus }: { onOpen: (c: ChatTarget) => 
           </li>
         ))}
       </ul>
+      {profile && (
+        <ProfileView
+          person={profile}
+          onClose={() => setProfile(null)}
+          onMessage={(p) => {
+            setProfile(null)
+            void open(p)
+          }}
+        />
+      )}
     </section>
   )
 }

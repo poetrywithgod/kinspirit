@@ -182,7 +182,7 @@ export type Message = {
   sender_id: string
   body: string
   created_at: string
-  kind?: 'text' | 'audio' | 'voice' | 'call'
+  kind?: 'text' | 'audio' | 'voice' | 'call' | 'image' | 'video' | 'file'
   duration?: number | null
   file_path?: string | null
   file_name?: string | null
@@ -191,6 +191,9 @@ export type Message = {
   edited_at?: string | null
   deleted_at?: string | null
   updated_at?: string
+  file_type?: string | null
+  media_w?: number | null
+  media_h?: number | null
   call_status?: 'ringing' | 'answered' | 'declined' | 'missed' | 'ended' | 'cancelled' | null
   call_ringing_at?: string | null
   call_answered_at?: string | null
@@ -209,7 +212,7 @@ export const listConversations = () => db.rpc<Conversation[]>('my_conversations'
 export const markRead = async (cid: string) => void (await db.rpc<unknown>('mark_read', { cid }))
 
 const MESSAGE_COLUMNS =
-  'id,conversation_id,sender_id,body,created_at,kind,file_path,file_name,file_size,duration,reply_to,edited_at,deleted_at,updated_at,call_status,call_ringing_at,call_answered_at,call_ended_at'
+  'id,conversation_id,sender_id,body,created_at,kind,file_path,file_name,file_size,duration,reply_to,edited_at,deleted_at,updated_at,file_type,media_w,media_h,call_status,call_ringing_at,call_answered_at,call_ended_at'
 
 /** First call: the latest 100 messages. With `after`: only messages newer than that time. */
 export async function fetchMessages(cid: string, after?: string): Promise<Message[]> {
@@ -237,7 +240,8 @@ export async function sendMessage(m: { id: string; conversation_id: string; body
 }
 
 
-export const MAX_AUDIO_BYTES = 20 * 1024 * 1024
+export const MAX_AUDIO_BYTES = 50 * 1024 * 1024
+export const MAX_MEDIA_BYTES = 50 * 1024 * 1024
 
 export const audioPath = (cid: string, id: string, name: string) => {
   const ext = (name.match(/\.([a-z0-9]{1,5})$/i)?.[1] ?? 'audio').toLowerCase()
@@ -267,6 +271,45 @@ export async function sendAudio(m: { id: string; conversation_id: string; file: 
   }
 }
 
+/** Uploads a photo, video or any file with its own name and format, then posts the message. Safe to retry. */
+export async function sendMedia(m: {
+  id: string
+  conversation_id: string
+  kind: 'image' | 'video' | 'file'
+  file: Blob
+  name: string
+  type: string
+  width?: number
+  height?: number
+  duration?: number
+  onProgress?: (f: number) => void
+}): Promise<void> {
+  const s = currentSession()
+  if (!s) throw new ApiError('no_session', 'Please log in again.')
+  const path = audioPath(m.conversation_id, m.id, m.name)
+  const type = m.type || 'application/octet-stream'
+  if (m.onProgress) await storage.uploadFileWithProgress(path, m.file, type, m.onProgress)
+  else await storage.uploadFile(path, m.file, type)
+  try {
+    await db.insert('messages', {
+      id: m.id,
+      conversation_id: m.conversation_id,
+      sender_id: s.user.id,
+      body: m.name.slice(0, 200) || 'File',
+      kind: m.kind,
+      file_path: path,
+      file_name: m.name.slice(0, 200) || 'File',
+      file_size: m.file.size,
+      file_type: type,
+      ...(m.width ? { media_w: m.width, media_h: m.height } : {}),
+      ...(m.duration ? { duration: Math.round(m.duration) } : {}),
+    })
+  } catch (e) {
+    if (e instanceof ApiError && e.code === '23505') return
+    throw e
+  }
+}
+
 export type AudioMessage = Message & { from: string }
 
 /** Audio that friends sent me, newest first, with the sender's username. */
@@ -286,6 +329,12 @@ export async function listReceivedAudio(): Promise<AudioMessage[]> {
 
 export const downloadAudioFile = (path: string) => storage.downloadFile(path)
 
+/** When a person joined Kinspirit (month and year are shown on their profile). */
+export async function profileSince(id: string): Promise<string | null> {
+  const rows = await db.select<{ created_at: string }>(`profiles?id=eq.${id}&select=created_at`)
+  return rows[0]?.created_at ?? null
+}
+
 /** Usernames for some people, by id. */
 export async function usernames(ids: string[]): Promise<Map<string, string>> {
   const out = new Map<string, string>()
@@ -300,7 +349,7 @@ export async function listIncomingMedia(days = 30): Promise<Message[]> {
   const me = myId()
   const since = encodeURIComponent(new Date(Date.now() - days * 86400000).toISOString())
   return db.select<Message>(
-    `messages?kind=in.(audio,voice)&deleted_at=is.null&sender_id=neq.${me}&created_at=gte.${since}&file_path=not.is.null&order=created_at.desc&limit=60&select=${MESSAGE_COLUMNS}`,
+    `messages?kind=in.(audio,voice,image,video,file)&deleted_at=is.null&sender_id=neq.${me}&created_at=gte.${since}&file_path=not.is.null&order=created_at.desc&limit=80&select=${MESSAGE_COLUMNS}`,
   )
 }
 export const deleteServerFile = (path: string) => storage.deleteFile(path)

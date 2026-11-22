@@ -2023,3 +2023,59 @@ img, video, canvas, svg { max-width: 100%; }
 .sys-note.missed { color: var(--error); }
 .link-btn { border: 0; background: none; padding: 0; color: var(--primary); font: inherit; font-weight: 700; text-decoration: underline; }
 @media (prefers-reduced-motion: reduce) { .incoming-ring { animation: none; } }
+
+/* ---- photos, videos and files ---- */
+.media-wrap { display: grid; gap: 4px; }
+.media-card {
+  display: block;
+  position: relative;
+  width: min(70vw, 300px);
+  max-height: 380px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.18);
+}
+.media-hit, .media-get { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: none; color: inherit; }
+.media-hit img, .media-video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.media-video { background: #000; object-fit: contain; }
+.media-get { display: grid; place-content: center; justify-items: center; gap: 6px; font: 600 13px var(--font-body); }
+.media-get svg { width: 40px; height: 40px; padding: 9px; border-radius: 50%; background: rgba(0, 0, 0, 0.45); color: #fff; }
+.file-card { display: flex; align-items: center; gap: 8px; min-width: min(64vw, 260px); }
+.file-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 0; border: 0; background: none; color: inherit; text-align: left; font: inherit; }
+.file-badge {
+  flex: none;
+  width: 44px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  font: 700 12px var(--font-heading);
+  letter-spacing: 0.02em;
+}
+.file-info { min-width: 0; display: grid; gap: 2px; }
+.file-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-sub { font-size: 12px; opacity: 0.8; }
+.file-sub.warn { color: var(--error); opacity: 1; }
+button.sender { padding: 0; border: 0; background: none; font: inherit; font-weight: 700; text-align: left; }
+
+/* ---- full-screen photo ---- */
+.lightbox { position: fixed; inset: 0; z-index: 95; display: flex; flex-direction: column; background: rgba(0, 0, 0, 0.94); color: #fff; }
+.lightbox-top { flex: none; display: flex; align-items: center; gap: 8px; padding: max(8px, env(safe-area-inset-top)) 8px 8px; }
+.lightbox-top .icon-btn { color: #fff; }
+.lightbox-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.lightbox-stage { flex: 1; min-height: 0; display: grid; place-items: center; overflow: auto; touch-action: pan-x pan-y pinch-zoom; }
+.lightbox-stage img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.lightbox-stage.zoomed { place-items: start; }
+.lightbox-stage.zoomed img { max-width: none; max-height: none; width: 220%; }
+
+/* ---- someone's profile ---- */
+.profile-view { position: fixed; inset: 0; z-index: 80; display: flex; flex-direction: column; background: var(--bg); color: var(--text); overflow: hidden; }
+.profile-top { position: relative; flex: none; padding: max(8px, env(safe-area-inset-top)) 8px 0; }
+.profile-body { position: relative; flex: 1; display: grid; align-content: start; justify-items: center; gap: 10px; padding: 24px 24px 40px; text-align: center; }
+.profile-photo { padding: 0; border: 0; background: none; border-radius: 50%; line-height: 0; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25); }
+.profile-photo .avatar-s { display: inline-grid; }
+.profile-name { margin: 6px 0 0; font: 600 26px var(--font-heading); }
+.profile-action { margin-top: 12px; }
+.avatar-tap { display: inline-flex; border-radius: 50%; flex: none; }
+.bubble.mine .link-btn { color: inherit; }

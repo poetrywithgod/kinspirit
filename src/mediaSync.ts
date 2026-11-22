@@ -2,8 +2,9 @@
 // Once a file lives on the device it stays there until the person deletes it, even after the
 // server has cleared its own copy. New kinds of media (pictures, video, documents) plug in here.
 import { ApiError, listIncomingMedia, usernames, type Message } from './api'
-import { autoSaveAudio, downloadAudio, isGone, markGone } from './library'
-import { getVoice, listAudio } from './localdb'
+import { autoSaveAudio, autoSaveBig, autoSavePhotos, downloadAudio, isGone, markGone } from './library'
+import { getVoice, listAudio, listMediaIds } from './localdb'
+import { saveReceivedMedia } from './mediaStore'
 import { saveReceivedVoice } from './voice'
 
 let running = false
@@ -21,12 +22,16 @@ export async function syncIncomingMedia(): Promise<void> {
     const rows = await listIncomingMedia()
     const names = await usernames([...new Set(rows.map((r) => r.sender_id))]).catch(() => new Map<string, string>())
     const audioIds = new Set((await listAudio().catch(() => [])).map((x) => x.id))
+    const mediaIds = new Set(await listMediaIds().catch(() => [] as string[]))
     for (const m of rows) {
       if (isGone(m.id) || (failures.get(m.id) ?? 0) >= 3) continue
       if (m.kind === 'audio' && (audioIds.has(m.id) || !autoSaveAudio())) continue
+      if (m.kind === 'image' && (mediaIds.has(m.id) || !autoSavePhotos())) continue
+      if ((m.kind === 'video' || m.kind === 'file') && (mediaIds.has(m.id) || !autoSaveBig())) continue
       if (m.kind === 'voice' && (await saved(m))) continue
       try {
         if (m.kind === 'voice') await saveReceivedVoice(m)
+        else if (m.kind === 'image' || m.kind === 'video' || m.kind === 'file') await saveReceivedMedia(m)
         else await downloadAudio(m, names.get(m.sender_id) ?? 'a friend')
       } catch (e) {
         if (e instanceof ApiError && e.code === 'gone') markGone(m.id)

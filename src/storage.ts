@@ -1,5 +1,5 @@
 // Asks the browser to treat Kinspirit's saved files as permanent, so they are not cleared when the phone runs low on space.
-import { listAudio, listVoiceIds } from './localdb'
+import { listAudio, listMediaIds, listVoiceIds } from './localdb'
 
 export type StorageInfo = { persisted: boolean | null; used: number; files: number; installed: boolean }
 
@@ -22,7 +22,7 @@ export async function storageInfo(): Promise<StorageInfo> {
   } catch {
     // not supported here
   }
-  const [a, v] = await Promise.all([listAudio().catch(() => []), listVoiceIds().catch(() => [])])
+  const [a, v, md] = await Promise.all([listAudio().catch(() => []), listVoiceIds().catch(() => []), listMediaIds().catch(() => [])])
   const installed = window.matchMedia('(display-mode: standalone)').matches || (navigator as { standalone?: boolean }).standalone === true
-  return { persisted, used, files: a.length + v.length, installed }
+  return { persisted, used, files: a.length + v.length + md.length, installed }
 }

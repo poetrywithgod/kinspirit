@@ -825,3 +825,61 @@ begin
     execute format('grant execute on function public.%s to authenticated', f);
   end loop;
 end $$;
+
+-- 10. Photos, videos and files of any kind --------------------------------------
+alter table public.messages drop constraint if exists messages_kind_check;
+alter table public.messages add constraint messages_kind_check
+  check (kind in ('text', 'audio', 'voice', 'call', 'image', 'video', 'file'));
+alter table public.messages add column if not exists file_type text;  -- the original format, e.g. application/pdf
+alter table public.messages add column if not exists media_w   integer;
+alter table public.messages add column if not exists media_h   integer;
+
+grant insert (id, conversation_id, sender_id, body, kind, file_path, file_name, file_size, duration, reply_to, file_type, media_w, media_h)
+  on public.messages to authenticated;
+
+-- Files up to 50 MB (the free plan's own limit).
+update storage.buckets set file_size_limit = 52428800 where id = 'chat-files';
+
+-- Chat list previews for the new kinds.
+drop function if exists public.my_conversations();
+create or replace function public.my_conversations()
+returns table (
+  id uuid, kind text, title text, last_message_at timestamptz,
+  other_id uuid, other_username text, other_avatar text,
+  last_body text, last_sender uuid, last_sender_name text, unread integer
+)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select c.id, c.kind, c.title, c.last_message_at,
+         o.user_id, p.username, p.avatar_url,
+         coalesce(lm.body, 'Group created'), lm.sender_id, lp.username,
+         (select count(*)::integer from public.messages m
+           where m.conversation_id = c.id and m.sender_id <> auth.uid() and m.deleted_at is null
+             and coalesce(m.call_status, '') <> 'cancelled' and m.created_at > me.last_read_at)
+  from public.conversation_members me
+  join public.conversations c on c.id = me.conversation_id
+  left join lateral (
+    select case when m.deleted_at is not null then '🚫 Message deleted'
+                when m.kind = 'audio' then '🎵 ' || m.body when m.kind = 'voice' then '🎤 Voice note'
+                when m.kind = 'image' then '📷 Photo' when m.kind = 'video' then '🎥 Video'
+                when m.kind = 'file' then '📄 ' || coalesce(m.file_name, 'File')
+                when m.kind = 'call' and m.call_status in ('missed', 'ringing') and m.sender_id <> auth.uid() then '📞 Missed call'
+                when m.kind = 'call' then '📞 Call' else m.body end as body, m.sender_id
+    from public.messages m
+    where m.conversation_id = c.id and coalesce(m.call_status, '') <> 'cancelled'
+    order by m.created_at desc limit 1
+  ) lm on true
+  left join lateral (
+    select x.user_id from public.conversation_members x
+    where x.conversation_id = c.id and x.user_id <> auth.uid() and c.kind = 'direct' limit 1
+  ) o on true
+  left join public.profiles p on p.id = o.user_id
+  left join public.profiles lp on lp.id = lm.sender_id
+  where me.user_id = auth.uid() and (lm.sender_id is not null or c.kind = 'group')
+  order by c.last_message_at desc;
+$$;
+revoke all on function public.my_conversations() from public;
+grant execute on function public.my_conversations() to authenticated;

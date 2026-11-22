@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { ApiError, MAX_AUDIO_BYTES, audioPath, deleteMessage, editMessage, fetchMessages, markRead, myId, sendAudio, sendMessage, sendVoice, groupMembers, type Message } from '../api'
+import { ApiError, MAX_AUDIO_BYTES, MAX_MEDIA_BYTES, audioPath, deleteMessage, editMessage, fetchMessages, markRead, myId, sendAudio, sendMedia, sendMessage, sendVoice, groupMembers, type Message, type Person } from '../api'
+import { isImage, isVideo, prepareImage, probeVideo, typeOf, type Prepared } from '../media'
+import { keepOwnMedia } from '../mediaStore'
+import { Lightbox } from './Lightbox'
+import { MediaBubble } from './MediaBubble'
+import { ProfileView } from './ProfileView'
 import { downloadAudio, keepOwnAudio, useLibrary } from '../library'
 import { syncIncomingMedia } from '../mediaSync'
 import { currentTrack, play, toggle, usePlayer } from '../player'
@@ -16,7 +21,7 @@ import { clock, fmtDur } from '../time'
 import { usePolling } from '../usePolling'
 import { Avatar } from './Avatar'
 import type { ChatTarget } from './ChatsTab'
-import { BackIcon, ChevronDownIcon, ClipIcon, CloseIcon, CopyIcon, EditIcon, MicIcon, PhoneIcon, ReplyIcon, TrashIcon, DownloadIcon, MusicIcon, PauseIcon, PlayIcon, SendIcon } from './icons'
+import { FileIcon, ImageIcon, BackIcon, ChevronDownIcon, ClipIcon, CloseIcon, CopyIcon, EditIcon, MicIcon, PhoneIcon, ReplyIcon, TrashIcon, DownloadIcon, MusicIcon, PauseIcon, PlayIcon, SendIcon } from './icons'
 
 const newId = () =>
   typeof crypto.randomUUID === 'function'
@@ -76,6 +81,9 @@ function preview(m: Message | undefined): string {
   if (m.deleted_at) return '🚫 Message deleted'
   if (m.kind === 'voice') return '🎤 Voice note'
   if (m.kind === 'audio') return `🎵 ${m.file_name ?? m.body}`
+  if (m.kind === 'image') return '📷 Photo'
+  if (m.kind === 'video') return '🎥 Video'
+  if (m.kind === 'file') return `📄 ${m.file_name ?? m.body}`
   return m.body.length > 120 ? `${m.body.slice(0, 120)}…` : m.body
 }
 
@@ -98,6 +106,14 @@ export function ChatView({
   const [menu, setMenu] = useState<Message | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<Message | null>(null)
   const [busy, setBusy] = useState(false)
+  const [attach, setAttach] = useState(false)
+  const [viewer, setViewer] = useState<{ src: string; name: string; save?: () => void } | null>(null)
+  const [profile, setProfile] = useState<Person | null>(null)
+  const [people, setPeople] = useState<Map<string, Person>>(new Map())
+  const [progress, setProgress] = useState<Record<string, number>>({})
+  const media = useRef(new Map<string, Prepared>())
+  const photoPicker = useRef<HTMLInputElement>(null)
+  const docPicker = useRef<HTMLInputElement>(null)
   const asked = useRef(0)
   const [messages, setMessages] = useState<Message[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -177,6 +193,7 @@ export function ChatView({
       groupMembers(chat.id)
         .then((ms) => {
           setNames(new Map(ms.map((x) => [x.id, x.username])))
+          setPeople(new Map(ms.map((x) => [x.id, { id: x.id, username: x.username, avatar_url: x.avatar_url }])))
           setAmAdmin(ms.some((x) => x.id === me && x.role === 'admin'))
         })
         .catch(() => {})
@@ -202,6 +219,19 @@ export function ChatView({
           ? sendVoice({ id: m.id, conversation_id: m.conversation_id, blob: vo.blob, seconds: vo.seconds })
           : m.kind === 'audio' && file
           ? sendAudio({ id: m.id, conversation_id: m.conversation_id, file })
+          : (m.kind === 'image' || m.kind === 'video' || m.kind === 'file') && media.current.has(m.id)
+          ? sendMedia({
+              id: m.id,
+              conversation_id: m.conversation_id,
+              kind: m.kind,
+              file: media.current.get(m.id)!.blob,
+              name: media.current.get(m.id)!.name,
+              type: media.current.get(m.id)!.type,
+              width: media.current.get(m.id)!.width,
+              height: media.current.get(m.id)!.height,
+              duration: media.current.get(m.id)!.duration,
+              onProgress: (f) => setProgress((cur) => ({ ...cur, [m.id]: f })),
+            })
           : sendMessage({ id: m.id, conversation_id: m.conversation_id, body: m.body, reply_to: m.reply_to })
       job
         .then(() => {
@@ -289,8 +319,8 @@ export function ChatView({
   const pickAudio = (file: File | undefined) => {
     if (!file) return
     const isAudio = file.type.startsWith('audio/') || /\.(mp3|m4a|aac|ogg|opus|wav|flac|amr|wma)$/i.test(file.name)
-    if (!isAudio) return setError('Choose an audio file (like MP3 or M4A).')
-    if (file.size > MAX_AUDIO_BYTES) return setError('That file is too big. The limit is 20 MB.')
+    if (!isAudio) return setError(`“${file.name}” is not an audio file. Use Document to send other files.`)
+    if (file.size > MAX_AUDIO_BYTES) return setError('That file is too big. The limit is 50 MB.')
     setError('')
     const id = newId()
     files.current.set(id, file)
@@ -310,6 +340,59 @@ export function ChatView({
     stick.current = true
     setMessages((cur) => merge(cur, [m]))
     push(m)
+  }
+
+  /** Photos, videos, audio files and documents. Each keeps its own name and format. */
+  const pickFiles = async (list: FileList | null, mode: 'photo' | 'audio' | 'document') => {
+    const picked = Array.from(list ?? [])
+    setAttach(false)
+    for (const file of picked) {
+      if (file.size > MAX_MEDIA_BYTES) {
+        setError(`“${file.name}” is too big. The limit is 50 MB.`)
+        continue
+      }
+      if (mode === 'audio') {
+        pickAudio(file)
+        continue
+      }
+      let kind: 'image' | 'video' | 'file' = 'file'
+      let prep: Prepared = { blob: file, name: file.name, type: typeOf(file) }
+      if (mode === 'photo') {
+        if (isImage(file)) {
+          kind = 'image'
+          prep = await prepareImage(file)
+        } else if (isVideo(file)) {
+          kind = 'video'
+          prep = { ...prep, ...(await probeVideo(file)) }
+        } else {
+          setError('Choose photos or videos here. Use Document to send other files.')
+          continue
+        }
+      }
+      setError('')
+      const id = newId()
+      media.current.set(id, prep)
+      void keepOwnMedia(id, prep.blob, prep.name, prep.type).catch(() => {})
+      const m: Message = {
+        id,
+        conversation_id: chat.id,
+        sender_id: me,
+        body: prep.name,
+        created_at: new Date().toISOString(),
+        kind,
+        file_path: audioPath(chat.id, id, prep.name),
+        file_name: prep.name,
+        file_size: prep.blob.size,
+        file_type: prep.type,
+        media_w: prep.width ?? null,
+        media_h: prep.height ?? null,
+        duration: prep.duration ? Math.round(prep.duration) : null,
+        status: 'sending',
+      }
+      stick.current = true
+      setMessages((cur) => merge(cur, [m]))
+      push(m)
+    }
   }
 
   const save = async (m: Message) => {
@@ -416,10 +499,15 @@ export function ChatView({
             <span className="chat-name">{chat.name}</span>
           </button>
         ) : (
-          <>
+          <button
+            type="button"
+            className="chat-title-btn"
+            aria-label="View profile"
+            onClick={() => chat.userId && setProfile({ id: chat.userId, username: chat.name.replace(/^@/, ''), avatar_url: chat.avatar })}
+          >
             <Avatar src={chat.avatar} name={chat.name} size={40} />
             <span className="chat-name">{chat.name}</span>
-          </>
+          </button>
         )}
         <button
           type="button"
@@ -486,9 +574,17 @@ export function ChatView({
                   </button>
                 )}
                 {isGroup && !mine && (
-                  <span className="sender" style={{ color: senderColor(m.sender_id) }}>
+                  <button
+                    type="button"
+                    className="sender"
+                    style={{ color: senderColor(m.sender_id) }}
+                    onClick={() => {
+                      const p = people.get(m.sender_id)
+                      if (p) setProfile(p)
+                    }}
+                  >
                     @{names.get(m.sender_id) ?? '…'}
-                  </span>
+                  </button>
                 )}
                 {m.deleted_at ? (
                   <span className="bubble-text deleted-text">🚫 {mine ? 'You deleted this message' : 'This message was deleted'}</span>
@@ -538,13 +634,15 @@ export function ChatView({
                       {notes[m.id] && <span className="audio-sub warn">{notes[m.id]}</span>}
                     </span>
                   </span>
+                ) : m.kind === 'image' || m.kind === 'video' || m.kind === 'file' ? (
+                  <MediaBubble m={m} onView={(src, name, saveIt) => setViewer({ src, name, save: saveIt })} />
                 ) : (
                   <span className="bubble-text">{m.body}</span>
                 )}
                   </>
                 )}
                 <span className="bubble-meta">
-                  {m.status === 'sending' ? 'Sending…' : m.status === 'failed' ? '' : `${m.edited_at && !m.deleted_at ? 'Edited · ' : ''}${clock(m.created_at)}`}
+                  {m.status === 'sending' ? (progress[m.id] ? `Sending ${Math.round(progress[m.id] * 100)}%` : 'Sending…') : m.status === 'failed' ? '' : `${m.edited_at && !m.deleted_at ? 'Edited · ' : ''}${clock(m.created_at)}`}
                   {m.status === 'failed' && (
                     <button type="button" className="retry" onClick={() => retry(m)}>
                       Not sent. Tap to retry
@@ -556,6 +654,28 @@ export function ChatView({
           )
         })}
       </div>
+
+      {attach && (
+        <div className="sheet-backdrop" role="presentation" onClick={() => setAttach(false)}>
+          <div className="sheet" role="menu" onClick={(e) => e.stopPropagation()}>
+            <button type="button" role="menuitem" onClick={() => photoPicker.current?.click()}>
+              <ImageIcon /> Photo or video
+            </button>
+            <button type="button" role="menuitem" onClick={() => picker.current?.click()}>
+              <MusicIcon /> Audio
+            </button>
+            <button type="button" role="menuitem" onClick={() => docPicker.current?.click()}>
+              <FileIcon /> Document or any file
+            </button>
+            <button type="button" role="menuitem" className="cancel" onClick={() => setAttach(false)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {viewer && <Lightbox src={viewer.src} name={viewer.name} onClose={() => setViewer(null)} onSave={viewer.save} />}
+      {profile && <ProfileView person={profile} onClose={() => setProfile(null)} />}
 
       {(replyTo || editing) && !rec && (
         <div className="compose-banner">
@@ -680,14 +800,36 @@ export function ChatView({
         <input
           ref={picker}
           type="file"
-          accept="audio/*,.mp3,.m4a,.aac,.ogg,.opus,.wav,.flac"
+          accept="audio/*,.mp3,.m4a,.aac,.ogg,.opus,.wav,.flac,.amr,.wma"
+          multiple
           hidden
           onChange={(e) => {
-            pickAudio(e.target.files?.[0])
+            void pickFiles(e.target.files, 'audio')
             e.target.value = ''
           }}
         />
-        <button type="button" className="icon-btn attach" aria-label="Send an audio file" onClick={() => picker.current?.click()}>
+        <input
+          ref={photoPicker}
+          type="file"
+          accept="image/*,video/*"
+          multiple
+          hidden
+          onChange={(e) => {
+            void pickFiles(e.target.files, 'photo')
+            e.target.value = ''
+          }}
+        />
+        <input
+          ref={docPicker}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            void pickFiles(e.target.files, 'document')
+            e.target.value = ''
+          }}
+        />
+        <button type="button" className="icon-btn attach" aria-label="Attach a photo, video, audio or file" onClick={() => setAttach(true)}>
           <ClipIcon />
         </button>
         <textarea

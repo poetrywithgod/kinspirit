@@ -16,6 +16,7 @@ import { Avatar } from './Avatar'
 import type { ChatTarget } from './ChatsTab'
 import { ContactPicker } from './ContactPicker'
 import { BackIcon, DotsIcon, PlusIcon } from './icons'
+import { ProfileView } from './ProfileView'
 
 type Sheet =
   | { kind: 'member'; m: GroupMember }
@@ -37,6 +38,7 @@ export function GroupInfo({
 }) {
   const me = myId()
   const [members, setMembers] = useState<GroupMember[] | null>(null)
+  const [profile, setProfile] = useState<Person | null>(null)
   const [error, setError] = useState('')
   const [sheet, setSheet] = useState<Sheet>(null)
   const [title, setTitle] = useState(chat.name)
@@ -125,13 +127,18 @@ export function GroupInfo({
           <ul className="rows">
             {(members ?? []).map((m) => (
               <li key={m.id} className="row person">
-                <span className="row-hit static">
+                <button
+                  type="button"
+                  className="row-hit"
+                  aria-label={`View @${m.username}'s profile`}
+                  onClick={() => setProfile({ id: m.id, username: m.username, avatar_url: m.avatar_url })}
+                >
                   <Avatar src={m.avatar_url} name={m.username} />
                   <span className="row-main">
                     <span className="row-name">@{m.username}{m.id === me ? ' (you)' : ''}</span>
                   </span>
                   {m.role === 'admin' && <span className="role">Admin</span>}
-                </span>
+                </button>
                 {iAmAdmin && m.id !== me && (
                   <button type="button" className="icon-btn" aria-label={`Options for ${m.username}`} onClick={() => setSheet({ kind: 'member', m })}>
                     <DotsIcon />
@@ -242,6 +249,7 @@ export function GroupInfo({
           </div>
         </div>
       )}
+      {profile && <ProfileView person={profile} onClose={() => setProfile(null)} />}
     </div>
   )
 }

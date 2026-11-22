@@ -19,12 +19,13 @@ function open(): Promise<IDBDatabase> {
   if (!dbp || dbUser !== uid) {
     dbUser = uid
     dbp = new Promise((resolve, reject) => {
-      const req = indexedDB.open(`kinspirit-${uid}`, 2)
+      const req = indexedDB.open(`kinspirit-${uid}`, 3)
       req.onupgradeneeded = () => {
         const db = req.result
         if (!db.objectStoreNames.contains('audio')) db.createObjectStore('audio', { keyPath: 'id' })
         if (!db.objectStoreNames.contains('blobs')) db.createObjectStore('blobs')
         if (!db.objectStoreNames.contains('voice')) db.createObjectStore('voice')
+        if (!db.objectStoreNames.contains('media')) db.createObjectStore('media', { keyPath: 'id' })
       }
       req.onsuccess = () => resolve(req.result)
       req.onerror = () => {
@@ -80,3 +81,18 @@ export const getVoice = (id: string) => run<Blob | undefined>(['voice'], 'readon
 export const saveVoice = (id: string, blob: Blob) =>
   run<unknown>(['voice'], 'readwrite', (tx) => tx.objectStore('voice').put(blob, id))
 export const listVoiceIds = () => run<IDBValidKey[]>(['voice'], 'readonly', (tx) => tx.objectStore('voice').getAllKeys())
+
+// ---- photos, videos and files kept on the device ----
+export type MediaRecord = { id: string; name: string; type: string; size: number; added_at: number; blob: Blob }
+
+export const saveMediaRecord = (rec: MediaRecord) =>
+  run<unknown>(['media'], 'readwrite', (tx) => tx.objectStore('media').put(rec)).then(() => undefined)
+
+export const getMediaRecord = (id: string) =>
+  run<MediaRecord | undefined>(['media'], 'readonly', (tx) => tx.objectStore('media').get(id))
+
+export const listMediaIds = () =>
+  run<IDBValidKey[]>(['media'], 'readonly', (tx) => tx.objectStore('media').getAllKeys()).then((k) => k.map(String))
+
+export const deleteMediaRecord = (id: string) =>
+  run<unknown>(['media'], 'readwrite', (tx) => tx.objectStore('media').delete(id)).then(() => undefined)

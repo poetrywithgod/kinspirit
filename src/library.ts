@@ -88,7 +88,28 @@ export async function keepOwnAudio(id: string, file: File, conversation_id: stri
   notify()
 }
 
-const autoKey = () => `kinspirit.autosave.audio.${myId()}`
+const autoKey = (what = 'audio') => `kinspirit.autosave.${what}.${myId()}`
+const readFlag = (what: string, fallback: boolean) => {
+  try {
+    const v = localStorage.getItem(autoKey(what))
+    return v === null ? fallback : v === 'on'
+  } catch {
+    return fallback
+  }
+}
+const writeFlag = (what: string, on: boolean) => {
+  try {
+    localStorage.setItem(autoKey(what), on ? 'on' : 'off')
+  } catch {
+    // storage blocked
+  }
+}
+/** Photos are small after shrinking, so they are saved automatically unless switched off. */
+export const autoSavePhotos = () => readFlag('photos', true)
+export const setAutoSavePhotos = (on: boolean) => writeFlag('photos', on)
+/** Videos and documents can be big, so they wait for a tap unless switched on. */
+export const autoSaveBig = () => readFlag('big', false)
+export const setAutoSaveBig = (on: boolean) => writeFlag('big', on)
 /** Audio files (not voice notes) are saved automatically unless the person switches it off to save data. */
 export const autoSaveAudio = (): boolean => {
   try {

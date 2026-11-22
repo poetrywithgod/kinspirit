@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { autoSaveAudio, onLibraryChange, setAutoSaveAudio } from '../library'
+import { autoSaveAudio, autoSaveBig, autoSavePhotos, onLibraryChange, setAutoSaveAudio, setAutoSaveBig, setAutoSavePhotos } from '../library'
 import { protectStorage, storageInfo, type StorageInfo } from '../storage'
 import { fmtSize } from '../time'
 import { ApiError, updateAvatar } from '../api'
@@ -26,6 +26,8 @@ export function SettingsTab({
 }) {
   const [info, setInfo] = useState<StorageInfo | null>(null)
   const [autoAudio, setAutoAudio] = useState(autoSaveAudio())
+  const [autoPhotos, setAutoPhotos] = useState(autoSavePhotos())
+  const [autoBig, setAutoBig] = useState(autoSaveBig())
   useEffect(() => {
     let dead = false
     const load = () => void storageInfo().then((i) => !dead && setInfo(i))
@@ -100,7 +102,7 @@ export function SettingsTab({
       <div className="settings-card">
         <h2 className="section-title flush">Saved on this phone</h2>
         <p className="muted">
-          Voice notes and audio you receive are saved on this phone automatically. They stay here until you delete them.
+          What you receive is saved on this phone and stays here until you delete it.
           {info ? ` ${info.files} saved file${info.files === 1 ? '' : 's'}, ${fmtSize(info.used)} used.` : ''}
         </p>
         {info && info.persisted === false && (
@@ -121,6 +123,28 @@ export function SettingsTab({
             }}
           />
           <span>Save audio files automatically (uses data; voice notes are always saved)</span>
+        </label>
+        <label className="switch-row">
+          <input
+            type="checkbox"
+            checked={autoPhotos}
+            onChange={(e) => {
+              setAutoPhotos(e.target.checked)
+              setAutoSavePhotos(e.target.checked)
+            }}
+          />
+          <span>Save photos automatically</span>
+        </label>
+        <label className="switch-row">
+          <input
+            type="checkbox"
+            checked={autoBig}
+            onChange={(e) => {
+              setAutoBig(e.target.checked)
+              setAutoSaveBig(e.target.checked)
+            }}
+          />
+          <span>Save videos and documents automatically (they can be big; otherwise tap to download)</span>
         </label>
       </div>
 

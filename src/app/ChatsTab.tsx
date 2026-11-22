@@ -5,7 +5,7 @@ import { usePolling } from '../usePolling'
 import { Avatar } from './Avatar'
 import { PlusIcon } from './icons'
 
-export type ChatTarget = { id: string; name: string; avatar: string | null; kind?: 'direct' | 'group' }
+export type ChatTarget = { id: string; name: string; avatar: string | null; kind?: 'direct' | 'group'; userId?: string }
 
 type Filter = 'all' | 'groups' | 'meetings'
 const FILTERS: { id: Filter; label: string }[] = [
@@ -101,7 +101,7 @@ export function ChatsTab({
               <button
                 type="button"
                 className="row"
-                onClick={() => onOpen({ id: c.id, name, avatar: c.other_avatar, kind: c.kind })}
+                onClick={() => onOpen({ id: c.id, name, avatar: c.other_avatar, kind: c.kind, ...(c.other_id ? { userId: c.other_id } : {}) })}
               >
                 <Avatar src={c.other_avatar} name={name} group={c.kind === 'group'} />
                 <span className="row-main">
