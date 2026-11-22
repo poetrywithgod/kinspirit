@@ -3,6 +3,7 @@ import { defineConfig } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
+  resolve: process.env.FAKE_LK ? { alias: { 'livekit-client': process.env.FAKE_LK } } : undefined,
   plugins: [
     react(),
     VitePWA({

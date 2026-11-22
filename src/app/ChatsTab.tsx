@@ -1,0 +1,145 @@
+import { useState } from 'react'
+import { ApiError, listConversations, myId, type Conversation } from '../api'
+import { shortWhen } from '../time'
+import { usePolling } from '../usePolling'
+import { Avatar } from './Avatar'
+import { PlusIcon } from './icons'
+
+export type ChatTarget = { id: string; name: string; avatar: string | null; kind?: 'direct' | 'group' }
+
+type Filter = 'all' | 'groups' | 'meetings'
+const FILTERS: { id: Filter; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'groups', label: 'Groups' },
+  { id: 'meetings', label: 'Meetings' },
+]
+
+let cache: Conversation[] | null = null // lets the list appear instantly when coming back from a chat
+
+export function ChatsTab({
+  onOpen,
+  onFindPeople,
+  onNewGroup,
+}: {
+  onOpen: (c: ChatTarget) => void
+  onFindPeople: () => void
+  onNewGroup: () => void
+}) {
+  const [fab, setFab] = useState(false)
+  const [items, setItems] = useState<Conversation[] | null>(cache)
+  const [filter, setFilter] = useState<Filter>('all')
+  const [error, setError] = useState('')
+  const me = myId()
+
+  usePolling(async () => {
+    try {
+      const rows = await listConversations()
+      cache = rows
+      setItems(rows)
+      setError('')
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not load your chats.')
+    }
+  }, 8000)
+
+  const shown = (items ?? []).filter((c) => (filter === 'all' ? true : filter === 'groups' ? c.kind === 'group' : false))
+
+  return (
+    <section className="tab">
+      <div className="chips" role="tablist" aria-label="Filter chats">
+        {FILTERS.map((f) => (
+          <button
+            key={f.id}
+            type="button"
+            role="tab"
+            aria-selected={filter === f.id}
+            className={`chip${filter === f.id ? ' on' : ''}`}
+            onClick={() => setFilter(f.id)}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      {error && <p className="error center">{error}</p>}
+
+      {items === null && !error && <p className="muted center">Loading…</p>}
+
+      {items !== null && shown.length === 0 && (
+        <div className="empty-card">
+          <span className="empty-mark" aria-hidden="true" />
+          {filter === 'all' ? (
+            <>
+              <h1>No chats yet</h1>
+              <p>Find a friend by their username and say hello.</p>
+              <button type="button" className="btn empty-btn" onClick={onFindPeople}>
+                Find people
+              </button>
+            </>
+          ) : filter === 'groups' ? (
+            <>
+              <h1>No groups yet</h1>
+              <p>Bring your friends together in one chat.</p>
+              <button type="button" className="btn empty-btn" onClick={onNewGroup}>
+                New group
+              </button>
+            </>
+          ) : (
+            <>
+              <h1>No meetings yet</h1>
+              <p>Scheduled calls and meeting chats will appear here.</p>
+            </>
+          )}
+        </div>
+      )}
+
+      <ul className="rows">
+        {shown.map((c) => {
+          const name = c.kind === 'direct' ? `@${c.other_username ?? 'unknown'}` : (c.title ?? 'Group')
+          return (
+            <li key={c.id}>
+              <button
+                type="button"
+                className="row"
+                onClick={() => onOpen({ id: c.id, name, avatar: c.other_avatar, kind: c.kind })}
+              >
+                <Avatar src={c.other_avatar} name={name} group={c.kind === 'group'} />
+                <span className="row-main">
+                  <span className="row-top">
+                    <span className="row-name">{name}</span>
+                    <span className={`row-time${c.unread > 0 ? ' hot' : ''}`}>{shortWhen(c.last_message_at)}</span>
+                  </span>
+                  <span className="row-bottom">
+                    <span className="row-preview">
+                      {c.last_sender === me ? 'You: ' : c.kind === 'group' && c.last_sender_name ? `@${c.last_sender_name}: ` : ''}
+                      {c.last_body}
+                    </span>
+                    {c.unread > 0 && (
+                      <span className="badge" aria-label={`${c.unread} unread`}>
+                        {c.unread > 99 ? '99+' : c.unread}
+                      </span>
+                    )}
+                  </span>
+                </span>
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+
+      {fab && (
+        <div className="fab-menu" role="menu">
+          <button type="button" role="menuitem" onClick={() => { setFab(false); onFindPeople() }}>
+            New chat
+          </button>
+          <button type="button" role="menuitem" onClick={() => { setFab(false); onNewGroup() }}>
+            New group
+          </button>
+        </div>
+      )}
+      <button type="button" className="fab" aria-label="New chat or group" aria-expanded={fab} onClick={() => setFab((f) => !f)}>
+        <PlusIcon />
+      </button>
+    </section>
+  )
+}

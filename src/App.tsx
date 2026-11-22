@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ApiError, consumeAuthRedirect, currentSession, getMyProfile, signIn, signOut, signUp, type LoginResult } from './api'
 import { AuthLayout } from './AuthLayout'
-import { Home } from './Home'
+import { AppShell } from './app/AppShell'
 import { PatternLayer } from './PatternLayer'
 import { Profile } from './screens/Profile'
 import { VerifyEmail } from './screens/VerifyEmail'
@@ -416,7 +416,7 @@ export default function App() {
       )
     case 'home':
       return (
-        <Home
+        <AppShell
           username={username}
           avatar={avatar}
           onLogout={() => {

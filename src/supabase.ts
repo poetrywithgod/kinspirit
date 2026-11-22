@@ -276,6 +276,18 @@ export const db = {
     }
   },
 
+  async insert(table: string, row: Record<string, unknown>): Promise<void> {
+    try {
+      await call(`/rest/v1/${table}`, {
+        body: row,
+        token: await accessToken(),
+        headers: { Prefer: 'return=minimal' },
+      })
+    } catch (e) {
+      return setupHint(e)
+    }
+  },
+
   /** Creates the row; if this person already has one, updates it instead. */
   async save(table: string, row: Record<string, unknown> & { id: string }): Promise<void> {
     const token = await accessToken()
@@ -317,5 +329,51 @@ export const storage = {
       return setupHint(e)
     }
     return `${SUPABASE_URL}/storage/v1/object/public/avatars/${path}?v=${Date.now()}`
+  },
+
+  /** Puts a file in the private "chat-files" bucket (safe to repeat for the same path). */
+  async uploadFile(path: string, file: Blob, contentType: string): Promise<void> {
+    try {
+      await call(`/storage/v1/object/chat-files/${path}`, {
+        rawBody: file,
+        token: await accessToken(),
+        headers: { 'Content-Type': contentType, 'x-upsert': 'true' },
+      })
+    } catch (e) {
+      if (e instanceof ApiError && /exceeded|too large|maximum/i.test(e.message)) {
+        throw new ApiError('too_large', 'That file is too big. The limit is 20 MB.')
+      }
+      return setupHint(e)
+    }
+  },
+
+  async downloadFile(path: string): Promise<Blob> {
+    const res = await request(`/storage/v1/object/authenticated/chat-files/${path}`, { token: await accessToken() })
+    if (!res.ok) {
+      throw new ApiError(
+        res.status === 400 || res.status === 404 ? 'gone' : `http_${res.status}`,
+        res.status === 400 || res.status === 404 ? 'This file is no longer available.' : 'Could not download the file.',
+        res.status,
+      )
+    }
+    return res.blob()
+  },
+
+  async deleteFile(path: string): Promise<void> {
+    await request(`/storage/v1/object/chat-files/${path}`, { method: 'DELETE', token: await accessToken() })
+  },
+}
+
+export const functions = {
+  /** Calls a Supabase Edge Function as the signed-in person. */
+  async invoke<T>(name: string, body: Record<string, unknown>): Promise<T> {
+    try {
+      return await call<T>(`/functions/v1/${name}`, { body, token: await accessToken() })
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) {
+        throw new ApiError('calls_not_ready', 'Calls are not set up yet. The call function still needs to be added in Supabase.', 404)
+      }
+      throw e
+    }
   },
 }
