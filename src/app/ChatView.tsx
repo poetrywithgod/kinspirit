@@ -12,7 +12,7 @@ import { startRecording, type Recording } from '../recorder'
 import { keepOwnVoice, useVoiceIds } from '../voice'
 import { GroupInfo } from './GroupInfo'
 import { PatternLayer } from '../PatternLayer'
-import { clock } from '../time'
+import { clock, fmtDur } from '../time'
 import { usePolling } from '../usePolling'
 import { Avatar } from './Avatar'
 import type { ChatTarget } from './ChatsTab'
@@ -42,6 +42,33 @@ function merge(a: Message[], b: Message[]): Message[] {
   return [...map.values()].sort((x, y) =>
     x.created_at === y.created_at ? x.id.localeCompare(y.id) : x.created_at < y.created_at ? -1 : 1,
   )
+}
+
+/** What a call looks like in the chat. Returns '' for calls that never really started. */
+function callNote(m: Message, mine: boolean, who: string): string {
+  const age = Date.now() - new Date(m.created_at).getTime()
+  const status = m.call_status === 'ringing' && age > 120000 ? 'missed' : m.call_status
+  switch (status) {
+    case 'cancelled':
+      return ''
+    case 'ringing':
+      return mine ? '📞 Calling…' : `📞 ${who} is calling…`
+    case 'answered':
+      return '📞 Call in progress'
+    case 'ended': {
+      const secs =
+        m.call_answered_at && m.call_ended_at
+          ? Math.max(0, Math.round((new Date(m.call_ended_at).getTime() - new Date(m.call_answered_at).getTime()) / 1000))
+          : 0
+      return secs ? `📞 Call · ${fmtDur(secs)}` : '📞 Call'
+    }
+    case 'missed':
+      return mine ? '📞 No answer' : `📞 Missed call from ${who}`
+    case 'declined':
+      return mine ? `📞 ${who} declined the call` : '📞 You declined the call'
+    default:
+      return `📞 ${who} started a call`
+  }
 }
 
 function preview(m: Message | undefined): string {
@@ -426,9 +453,20 @@ export function ChatView({
           const mine = m.sender_id === me
           if (m.kind === 'call') {
             const who = mine ? 'You' : isGroup ? `@${names.get(m.sender_id) ?? '…'}` : chat.name
+            const note = callNote(m, mine, who)
+            if (!note) return null
+            const missed = note.startsWith('📞 Missed')
             return (
-              <p key={m.id} className="sys-note">
-                📞 {who} started a call
+              <p key={m.id} className={`sys-note${missed ? ' missed' : ''}`}>
+                {note}
+                {!mine && missed && inThisCall === false && (
+                  <>
+                    {' · '}
+                    <button type="button" className="link-btn" onClick={() => void startCall(chat)}>
+                      Call back
+                    </button>
+                  </>
+                )}
               </p>
             )
           }

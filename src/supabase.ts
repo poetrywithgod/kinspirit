@@ -418,6 +418,15 @@ export const functions = {
       if (e instanceof ApiError && e.status === 404) {
         throw new ApiError('calls_not_ready', 'Calls are not set up yet. The call function still needs to be added in Supabase.', 404)
       }
+      if (e instanceof ApiError && e.code === 'network' && navigator.onLine !== false) {
+        // The phone is online (chat works) but the function did not answer: it is missing, failed to start,
+        // or still requires a Supabase JWT check, so the browser blocks the reply.
+        console.error(
+          `Edge function "${name}" did not answer. Open ${SUPABASE_URL}/functions/v1/${name} in a browser tab to see why: ` +
+            'NOT_FOUND = not deployed; "Missing authorization header" = turn OFF "Enforce JWT verification"; BOOT_ERROR = redeploy it.',
+        )
+        throw new ApiError('calls_unreachable', "Calls can't start right now: the call service is not answering. Please try again in a little while.", 0)
+      }
       throw e
     }
   },

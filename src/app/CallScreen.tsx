@@ -11,9 +11,10 @@ import {
   useCall,
   type Row,
 } from '../call'
+import { acceptIncoming, declineIncoming, useIncoming } from '../incoming'
 import { fmtDur } from '../time'
 import { Avatar } from './Avatar'
-import { DotsIcon, DownIcon, HangupIcon, LockIcon, MicIcon, MicOffIcon, PhoneIcon, RecordIcon } from './icons'
+import { DotsIcon, DownIcon, HangupIcon, AnswerIcon, LockIcon, MicIcon, MicOffIcon, PhoneIcon, RecordIcon } from './icons'
 
 function useElapsed(since: number) {
   const [now, setNow] = useState(Date.now())
@@ -75,7 +76,13 @@ export function CallLayer() {
         <div className="call-head">
           <p className="call-title">{c.title}</p>
           <p className="call-sub">
-            {connecting ? 'Connecting…' : `${c.people.length} in call · ${fmtDur(secs)}`}
+            {connecting
+              ? 'Connecting…'
+              : c.dial === 'calling'
+                ? 'Calling…'
+                : c.dial === 'ringing'
+                  ? 'Ringing…'
+                  : `${c.people.length} in call · ${fmtDur(secs)}`}
             {c.locked && ' · Mics locked'}
           </p>
         </div>
@@ -110,6 +117,9 @@ export function CallLayer() {
           </li>
         ))}
         {connecting && <li className="muted center">Joining…</li>}
+        {!connecting && c.dial !== 'none' && (
+          <li className="muted center">{c.dial === 'ringing' ? 'Their phone is ringing…' : 'Waiting for them to come online…'}</li>
+        )}
       </ul>
 
       <footer className="call-controls">
@@ -162,6 +172,47 @@ export function CallLayer() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+/** Full-screen "someone is calling you" with Accept and Decline. */
+export function IncomingLayer() {
+  const c = useIncoming()
+  const [msg, setMsg] = useState('')
+  useEffect(() => {
+    if (!msg) return
+    const t = setTimeout(() => setMsg(''), 4000)
+    return () => clearTimeout(t)
+  }, [msg])
+  if (!c) {
+    return msg ? (
+      <div className="toast" role="alert" onClick={() => setMsg('')}>
+        {msg}
+      </div>
+    ) : null
+  }
+  const group = c.kind === 'group'
+  return (
+    <div className="incoming" role="alertdialog" aria-label="Incoming call">
+      <PatternLayer />
+      <div className="incoming-body">
+        <div className="incoming-ring">
+          <Avatar src={c.caller_avatar} name={c.caller_username} size={104} />
+        </div>
+        <p className="incoming-name">@{c.caller_username}</p>
+        <p className="incoming-sub">{group ? `is calling ${c.title ?? 'the group'}` : 'Kinspirit audio call…'}</p>
+      </div>
+      <div className="incoming-actions">
+        <button type="button" className="ctl leave" aria-label="Decline" onClick={() => void declineIncoming()}>
+          <HangupIcon />
+          <span>Decline</span>
+        </button>
+        <button type="button" className="ctl accept" aria-label="Accept" onClick={() => void acceptIncoming().then(setMsg)}>
+          <AnswerIcon />
+          <span>Accept</span>
+        </button>
+      </div>
     </div>
   )
 }

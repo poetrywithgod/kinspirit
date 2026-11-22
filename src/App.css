@@ -1995,3 +1995,31 @@ img, video, canvas, svg { max-width: 100%; }
 
 .switch-row { display: flex; align-items: flex-start; gap: 10px; margin-top: 10px; font-size: 14px; color: var(--text); }
 .switch-row input { flex: none; width: 20px; height: 20px; margin-top: 1px; accent-color: var(--primary); }
+
+/* ---- ringing ---- */
+.incoming {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  padding: max(40px, env(safe-area-inset-top)) 24px max(36px, env(safe-area-inset-bottom));
+  background: var(--bg-call, #2c0107);
+  color: #fff;
+  overflow: hidden;
+}
+.incoming-body { position: relative; margin-top: 12vh; text-align: center; display: grid; justify-items: center; gap: 8px; }
+.incoming-ring { border-radius: 50%; padding: 8px; animation: ring-pulse 1.4s ease-out infinite; }
+@keyframes ring-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(196, 39, 89, 0.7); }
+  100% { box-shadow: 0 0 0 36px rgba(196, 39, 89, 0); }
+}
+.incoming-name { margin: 12px 0 0; font: 600 26px var(--font-heading); }
+.incoming-sub { margin: 0; opacity: 0.8; }
+.incoming-actions { position: relative; display: flex; gap: 56px; }
+.ctl.accept svg { background: #1f9d55; color: #fff; }
+.sys-note.missed { color: var(--error); }
+.link-btn { border: 0; background: none; padding: 0; color: var(--primary); font: inherit; font-weight: 700; text-decoration: underline; }
+@media (prefers-reduced-motion: reduce) { .incoming-ring { animation: none; } }

@@ -10,12 +10,16 @@ import {
   type Participant,
   type RemoteTrack,
 } from 'livekit-client'
-import { ApiError, callHost, callPass, callStatus, sendMessage } from './api'
+import { ApiError, answerCall, callHost, callPass, callRow, callStatus, endCall, startCallRpc } from './api'
 import { addLocalAudio } from './library'
 
 export type Row = { id: string; name: string; muted: boolean; speaking: boolean; host: boolean; me: boolean }
 export type CallState = {
   phase: 'idle' | 'connecting' | 'live'
+  dial: 'none' | 'calling' | 'ringing' // the caller is waiting for the other side
+  callId: string
+  isCaller: boolean
+  direct: boolean
   open: boolean // the full call screen is showing
   cid: string
   title: string
@@ -33,6 +37,10 @@ export type CallState = {
 
 const idle: CallState = {
   phase: 'idle',
+  dial: 'none',
+  callId: '',
+  isCaller: false,
+  direct: false,
   open: false,
   cid: '',
   title: '',
@@ -57,6 +65,9 @@ function set(p: Partial<CallState>) {
 let room: Room | null = null
 const audioEls = new Map<string, HTMLMediaElement>()
 let refreshTimer = 0
+let watchTimer = 0
+let peerSeen = false
+const stopWatch = () => window.clearInterval(watchTimer)
 
 const roleOf = (p: Participant): 'host' | 'member' => {
   try {
@@ -82,6 +93,12 @@ function refresh() {
         me: p === room!.localParticipant,
       }))
       .sort((a, b) => Number(b.me) - Number(a.me) || Number(b.host) - Number(a.host) || a.name.localeCompare(b.name))
+    if (people.length > 1) peerSeen = true
+    // One-to-one: when the other person leaves, the call is over.
+    if (st.direct && peerSeen && people.length === 1 && st.phase === 'live') {
+      if (st.callId) void endCall(st.callId).catch(() => undefined)
+      return cleanup('The call ended.')
+    }
     let locked = false
     try {
       locked = (JSON.parse(room.metadata || '{}') as { locked?: boolean }).locked === true
@@ -90,6 +107,7 @@ function refresh() {
     }
     set({
       people,
+      ...(people.length > 1 && st.dial !== 'none' ? { dial: 'none' as const } : {}),
       locked,
       micOn: room.localParticipant.isMicrophoneEnabled,
       canSpeak: room.localParticipant.permissions?.canPublish !== false,
@@ -99,6 +117,8 @@ function refresh() {
 
 function cleanup(reason = '') {
   window.clearTimeout(refreshTimer)
+  stopWatch()
+  peerSeen = false
   stopMixer(true)
   audioEls.forEach((el) => el.remove())
   audioEls.clear()
@@ -113,20 +133,26 @@ function cleanup(reason = '') {
 
 export type CallTarget = { id: string; name: string; kind?: 'direct' | 'group' }
 
-const newId = () => crypto.randomUUID()
-
-/** Join the call for this chat. With `announce`, also posts "started a call" in the chat. */
-export async function joinCall(chat: CallTarget, announce = false) {
+/** Join the call for this chat. As the caller (`opts.caller`) this also starts ringing the others. */
+export async function joinCall(chat: CallTarget, opts: { caller?: boolean; callId?: string } = {}) {
   if (st.phase !== 'idle') {
     if (st.cid === chat.id) return set({ open: true })
     return set({ error: 'You are already in another call. Leave it first.', open: false })
   }
-  set({ ...idle, phase: 'connecting', open: true, cid: chat.id, title: chat.name })
+  set({ ...idle, phase: 'connecting', open: true, cid: chat.id, title: chat.name, direct: chat.kind !== 'group', callId: opts.callId ?? '' })
   try {
-    if (announce) {
-      await sendMessage({ id: newId(), conversation_id: chat.id, body: 'Started a call', kind: 'call' }).catch(() => {})
-    }
+    // Get the pass first: if calls are not working, nobody is rung for nothing.
     const pass = await callPass(chat.id)
+    if (opts.caller) {
+      const c = await startCallRpc(chat.id)
+      if (!c) throw new ApiError('call_failed', 'Could not start the call. Try again.')
+      if (c.mine) set({ callId: c.id, isCaller: true, dial: 'calling' })
+      else {
+        // The other person rang at the same moment: just answer their call.
+        await answerCall(c.id).catch(() => undefined)
+        set({ callId: c.id })
+      }
+    }
     const r = new Room({
       dynacast: true,
       publishDefaults: { audioPreset: AudioPresets.speech, dtx: true, red: true },
@@ -186,12 +212,34 @@ export async function joinCall(chat: CallTarget, announce = false) {
       set({ notice: 'The host has locked microphones.' })
     }
     refresh()
+    if (st.isCaller) watchCall()
   } catch (e) {
+    if (st.isCaller && st.callId) void endCall(st.callId, true).catch(() => undefined)
     cleanup(e instanceof ApiError ? e.message : 'Could not join the call. Check your internet and try again.')
   }
 }
 
-/** Starts a call (or joins it if one is already running in this chat). */
+/** While ringing: learn when the other phone is reached, when they answer or say no, and give up after 45 seconds. */
+function watchCall() {
+  stopWatch()
+  const id = st.callId
+  const t0 = Date.now()
+  watchTimer = window.setInterval(async () => {
+    if (st.phase === 'idle' || st.callId !== id) return stopWatch()
+    const row = await callRow(id).catch(() => null)
+    if (st.callId !== id) return
+    if (row?.call_status === 'declined') return cleanup('They declined the call.')
+    if (row?.call_status === 'missed' || row?.call_status === 'ended') return cleanup(st.dial !== 'none' ? 'No answer.' : 'The call ended.')
+    if (row?.call_status === 'answered' && st.dial !== 'none') set({ dial: 'none' })
+    else if (row?.call_ringing_at && st.dial === 'calling') set({ dial: 'ringing' })
+    if (st.dial !== 'none' && Date.now() - t0 > 45000) {
+      await endCall(id).catch(() => undefined)
+      cleanup('No answer.')
+    }
+  }, 2000)
+}
+
+/** Starts a call: rings the others. If a call is already running in this chat, joins it instead. */
 export async function startCall(chat: CallTarget) {
   if (st.phase !== 'idle') return void joinCall(chat)
   let active = false
@@ -200,14 +248,18 @@ export async function startCall(chat: CallTarget) {
   } catch (e) {
     return set({ error: e instanceof ApiError ? e.message : 'Could not start the call.' })
   }
-  await joinCall(chat, !active)
+  await joinCall(chat, active ? {} : { caller: true })
 }
 
 export function leaveCall() {
   if (st.phase === 'idle') return
+  const { callId, isCaller, dial, direct } = st
+  // Hanging up while it is still ringing makes it a missed call; ending a one-to-one call closes it.
+  if (callId && (direct || (isCaller && dial !== 'none'))) void endCall(callId).catch(() => undefined)
   cleanup()
 }
 
+export const getCall = (): CallState => st
 export const showCall = (open: boolean) => set({ open })
 export const clearCallError = () => set({ error: '', notice: '' })
 

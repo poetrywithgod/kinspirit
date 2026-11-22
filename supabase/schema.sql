@@ -656,3 +656,172 @@ begin
     execute format('grant execute on function public.%s to authenticated', f);
   end loop;
 end $$;
+
+-- 9. Ringing: calling, ringing, answered, missed -------------------------------
+-- A call is a chat message (kind 'call') that carries its own status.
+alter table public.messages add column if not exists call_status      text
+  check (call_status in ('ringing', 'answered', 'declined', 'missed', 'ended', 'cancelled'));
+alter table public.messages add column if not exists call_ringing_at  timestamptz; -- the other phone has been reached
+alter table public.messages add column if not exists call_answered_at timestamptz;
+alter table public.messages add column if not exists call_ended_at    timestamptz;
+create index if not exists messages_ringing_idx on public.messages (created_at) where call_status = 'ringing';
+
+-- Call messages have no file, so the earlier "audio" rule must allow them.
+alter table public.messages drop constraint if exists messages_audio_check;
+alter table public.messages add constraint messages_audio_check
+  check (kind in ('text', 'call') or (file_path is not null and file_path like conversation_id::text || '/%'));
+
+-- Start ringing. If this chat is already ringing, returns that call (mine = false means someone else rang first).
+create or replace function public.start_call(cid uuid)
+returns table (id uuid, mine boolean)
+language plpgsql
+security definer
+set search_path = public
+as $$
+#variable_conflict use_column
+declare me uuid := auth.uid(); mid uuid; snd uuid;
+begin
+  if me is null or not public.is_member(cid) then raise exception 'not allowed'; end if;
+  select m.id, m.sender_id into mid, snd from public.messages m
+   where m.conversation_id = cid and m.kind = 'call' and m.call_status = 'ringing'
+     and m.created_at > now() - interval '45 seconds'
+   order by m.created_at desc limit 1;
+  if mid is null then
+    insert into public.messages (conversation_id, sender_id, body, kind, call_status)
+    values (cid, me, 'Call', 'call', 'ringing') returning messages.id into mid;
+    snd := me;
+  end if;
+  return query select mid, snd = me;
+end;
+$$;
+
+-- Calls ringing for me right now. Reaching me marks the call as "ringing" on the caller's screen.
+-- Calls nobody picked up for 45 seconds become "missed".
+create or replace function public.incoming_calls()
+returns table (
+  id uuid, conversation_id uuid, kind text, title text,
+  caller_id uuid, caller_username text, caller_avatar text, created_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+#variable_conflict use_column
+begin
+  if auth.uid() is null then raise exception 'not signed in'; end if;
+  update public.messages m set call_status = 'missed', updated_at = now()
+   where m.kind = 'call' and m.call_status = 'ringing' and m.created_at < now() - interval '45 seconds'
+     and public.is_member(m.conversation_id);
+  update public.messages m set call_ringing_at = now(), updated_at = now()
+   where m.kind = 'call' and m.call_status = 'ringing' and m.call_ringing_at is null
+     and m.sender_id <> auth.uid() and m.created_at > now() - interval '45 seconds'
+     and public.is_member(m.conversation_id);
+  return query
+    select m.id, m.conversation_id, c.kind, c.title, m.sender_id, p.username, p.avatar_url, m.created_at
+      from public.messages m
+      join public.conversations c on c.id = m.conversation_id
+      join public.profiles p on p.id = m.sender_id
+     where m.kind = 'call' and m.call_status = 'ringing' and m.sender_id <> auth.uid()
+       and m.created_at > now() - interval '45 seconds' and public.is_member(m.conversation_id)
+     order by m.created_at desc;
+end;
+$$;
+
+-- Pick up. Returns the call's status afterwards ('answered' means it worked).
+create or replace function public.answer_call(mid uuid)
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare s text;
+begin
+  update public.messages m set call_status = 'answered', call_answered_at = now(), updated_at = now()
+   where m.id = mid and m.kind = 'call' and m.call_status = 'ringing' and m.sender_id <> auth.uid()
+     and m.created_at > now() - interval '60 seconds' and public.is_member(m.conversation_id);
+  select m.call_status into s from public.messages m where m.id = mid and public.is_member(m.conversation_id);
+  return s;
+end;
+$$;
+
+-- Say no. In one-to-one chats the caller is told; in groups it only hides the call for the one who said no.
+create or replace function public.decline_call(mid uuid)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.messages m set call_status = 'declined', updated_at = now()
+   where m.id = mid and m.kind = 'call' and m.call_status = 'ringing' and m.sender_id <> auth.uid()
+     and public.is_member(m.conversation_id)
+     and exists (select 1 from public.conversations c where c.id = m.conversation_id and c.kind = 'direct');
+$$;
+
+-- Hang up. Before anyone answers it counts as missed (or "cancelled" when the call failed to start);
+-- after answering it ends the one-to-one call. Group calls only end while still ringing.
+create or replace function public.end_call(mid uuid, failed boolean default false)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.messages m
+     set call_status = case when m.call_status = 'ringing' and failed then 'cancelled'
+                            when m.call_status = 'ringing' then 'missed' else 'ended' end,
+         call_ended_at = now(), updated_at = now()
+   where m.id = mid and m.kind = 'call' and m.call_status in ('ringing', 'answered')
+     and public.is_member(m.conversation_id)
+     and (exists (select 1 from public.conversations c where c.id = m.conversation_id and c.kind = 'direct')
+          or (m.sender_id = auth.uid() and m.call_status = 'ringing'));
+$$;
+
+-- Chat list: show missed calls as such.
+drop function if exists public.my_conversations();
+create or replace function public.my_conversations()
+returns table (
+  id uuid, kind text, title text, last_message_at timestamptz,
+  other_id uuid, other_username text, other_avatar text,
+  last_body text, last_sender uuid, last_sender_name text, unread integer
+)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select c.id, c.kind, c.title, c.last_message_at,
+         o.user_id, p.username, p.avatar_url,
+         coalesce(lm.body, 'Group created'), lm.sender_id, lp.username,
+         (select count(*)::integer from public.messages m
+           where m.conversation_id = c.id and m.sender_id <> auth.uid() and m.deleted_at is null
+             and coalesce(m.call_status, '') <> 'cancelled' and m.created_at > me.last_read_at)
+  from public.conversation_members me
+  join public.conversations c on c.id = me.conversation_id
+  left join lateral (
+    select case when m.deleted_at is not null then '🚫 Message deleted'
+                when m.kind = 'audio' then '🎵 ' || m.body when m.kind = 'voice' then '🎤 Voice note'
+                when m.kind = 'call' and m.call_status in ('missed', 'ringing') and m.sender_id <> auth.uid() then '📞 Missed call'
+                when m.kind = 'call' then '📞 Call' else m.body end as body, m.sender_id
+    from public.messages m
+    where m.conversation_id = c.id and coalesce(m.call_status, '') <> 'cancelled'
+    order by m.created_at desc limit 1
+  ) lm on true
+  left join lateral (
+    select x.user_id from public.conversation_members x
+    where x.conversation_id = c.id and x.user_id <> auth.uid() and c.kind = 'direct' limit 1
+  ) o on true
+  left join public.profiles p on p.id = o.user_id
+  left join public.profiles lp on lp.id = lm.sender_id
+  where me.user_id = auth.uid() and (lm.sender_id is not null or c.kind = 'group')
+  order by c.last_message_at desc;
+$$;
+
+do $$
+declare f text;
+begin
+  foreach f in array array[
+    'start_call(uuid)', 'incoming_calls()', 'answer_call(uuid)', 'decline_call(uuid)', 'end_call(uuid, boolean)', 'my_conversations()'
+  ] loop
+    execute format('revoke all on function public.%s from public', f);
+    execute format('grant execute on function public.%s to authenticated', f);
+  end loop;
+end $$;

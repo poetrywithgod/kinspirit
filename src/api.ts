@@ -191,6 +191,10 @@ export type Message = {
   edited_at?: string | null
   deleted_at?: string | null
   updated_at?: string
+  call_status?: 'ringing' | 'answered' | 'declined' | 'missed' | 'ended' | 'cancelled' | null
+  call_ringing_at?: string | null
+  call_answered_at?: string | null
+  call_ended_at?: string | null
   status?: 'sending' | 'failed'
 }
 
@@ -205,7 +209,7 @@ export const listConversations = () => db.rpc<Conversation[]>('my_conversations'
 export const markRead = async (cid: string) => void (await db.rpc<unknown>('mark_read', { cid }))
 
 const MESSAGE_COLUMNS =
-  'id,conversation_id,sender_id,body,created_at,kind,file_path,file_name,file_size,duration,reply_to,edited_at,deleted_at,updated_at'
+  'id,conversation_id,sender_id,body,created_at,kind,file_path,file_name,file_size,duration,reply_to,edited_at,deleted_at,updated_at,call_status,call_ringing_at,call_answered_at,call_ended_at'
 
 /** First call: the latest 100 messages. With `after`: only messages newer than that time. */
 export async function fetchMessages(cid: string, after?: string): Promise<Message[]> {
@@ -347,6 +351,25 @@ export async function sendVoice(m: { id: string; conversation_id: string; blob: 
   }
 }
 
+
+// ---- ringing ----
+export type IncomingCall = {
+  id: string
+  conversation_id: string
+  kind: 'direct' | 'group'
+  title: string | null
+  caller_id: string
+  caller_username: string
+  caller_avatar: string | null
+  created_at: string
+}
+export const startCallRpc = async (cid: string) => (await db.rpc<{ id: string; mine: boolean }[]>('start_call', { cid }))[0]
+export const incomingCalls = () => db.rpc<IncomingCall[]>('incoming_calls', {})
+export const answerCall = (mid: string) => db.rpc<string | null>('answer_call', { mid })
+export const declineCall = async (mid: string) => void (await db.rpc<unknown>('decline_call', { mid }))
+export const endCall = async (mid: string, failed = false) => void (await db.rpc<unknown>('end_call', { mid, failed }))
+export const callRow = async (mid: string) =>
+  (await db.select<Message>(`messages?id=eq.${mid}&select=id,call_status,call_ringing_at,call_answered_at`))[0] ?? null
 
 // ---- calls ----
 export type CallPass = { url: string; token: string; role: 'host' | 'member'; locked: boolean }

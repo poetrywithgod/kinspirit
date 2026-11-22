@@ -8,7 +8,8 @@ import { MiniPlayer } from './MiniPlayer'
 import { stop } from '../player'
 import { stopVoice } from '../voice'
 import { leaveCall } from '../call'
-import { CallLayer } from './CallScreen'
+import { CallLayer, IncomingLayer } from './CallScreen'
+import { pollIncoming } from '../incoming'
 import { ContactsTab } from './ContactsTab'
 import { MeetingsTab } from './MeetingsTab'
 import { SettingsTab } from './SettingsTab'
@@ -47,6 +48,7 @@ function Shell({
     void protectStorage()
   }, [])
   usePolling(() => syncIncomingMedia(), 15000)
+  usePolling(() => pollIncoming(), 3000)
   const [tab, setTab] = useState<Tab>('chats')
   const [chat, setChat] = useState<ChatTarget | null>(null)
   const [menu, setMenu] = useState(false)
@@ -171,6 +173,7 @@ export function AppShell(props: {
     <>
       <Shell {...props} />
       <CallLayer />
+      <IncomingLayer />
     </>
   )
 }
