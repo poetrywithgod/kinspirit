@@ -791,6 +791,7 @@ a.btn {
 .shell-main {
   flex: 1;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -835,6 +836,7 @@ a.btn {
   margin: 8px 0 0;
   padding: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr); /* a long message can never make the list wider than the screen */
   gap: 4px;
 }
 .row,
@@ -865,6 +867,7 @@ a.btn {
   flex: 1;
   min-width: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 2px;
 }
 .row-top,
@@ -1979,3 +1982,13 @@ html.in-call .chat {
   font-size: 12px;
   line-height: 1;
 }
+
+/* ---- the page always fits the screen: no sideways scrolling ---- */
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+#root { max-width: 100%; overflow-x: clip; }
+img, video, canvas, svg { max-width: 100%; }
+.tab, .chat-list { min-width: 0; overflow-x: hidden; }

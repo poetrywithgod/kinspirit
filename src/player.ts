@@ -1,6 +1,7 @@
 // One music player for the whole app. It lives outside React, so changing tabs or opening a chat never stops it.
 import { useSyncExternalStore } from 'react'
 import { getAudioBlob, listAudio, type AudioMeta } from './localdb'
+import { withAudioType } from './mime'
 
 export type Track = { id: string; title: string; artist: string }
 export type Repeat = 'off' | 'all' | 'one'
@@ -37,18 +38,36 @@ let el: HTMLAudioElement | null = null
 let objectUrl = ''
 let loadToken = 0
 
+// Phones only let a page start sound straight after a tap. Our play() has to read the file first,
+// which takes a moment, so the player is "unlocked" at the moment of the tap with a silent clip.
+const SILENCE = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA='
+const isSilent = () => !!el && el.src.startsWith('data:')
+const hasTrack = () => !!el && !!el.src && !isSilent()
+function unlock() {
+  const a = audio()
+  if (a.src) return
+  a.src = SILENCE
+  void a.play().catch(() => undefined)
+}
+
 function audio(): HTMLAudioElement {
   if (el) return el
   const a = new Audio()
   a.preload = 'auto'
   a.addEventListener('timeupdate', () => {
+    if (isSilent()) return
     set({ time: a.currentTime, duration: Number.isFinite(a.duration) ? a.duration : state.duration })
     syncPosition()
   })
   a.addEventListener('durationchange', () => set({ duration: Number.isFinite(a.duration) ? a.duration : 0 }))
-  a.addEventListener('play', () => set({ playing: true }))
-  a.addEventListener('pause', () => set({ playing: false }))
+  a.addEventListener('play', () => !isSilent() && set({ playing: true }))
+  a.addEventListener('pause', () => !isSilent() && set({ playing: false }))
+  a.addEventListener('error', () => {
+    if (isSilent() || !a.src) return
+    set({ loading: false, playing: false, error: "This audio can't be played on this phone. Its format may not be supported (try MP3 or M4A)." })
+  })
   a.addEventListener('ended', () => {
+    if (isSilent()) return
     if (state.repeat === 'one') {
       a.currentTime = 0
       void a.play()
@@ -92,8 +111,9 @@ async function load(index: number, autoplay = true) {
   if (!t) return
   const token = ++loadToken
   set({ index, loading: true, error: '', time: 0, duration: 0 })
-  const blob = await getAudioBlob(t.id).catch(() => undefined)
+  const raw = await getAudioBlob(t.id).catch(() => undefined)
   if (token !== loadToken) return
+  const blob = raw && withAudioType(raw, t.title)
   if (!blob) {
     set({ loading: false, playing: false, error: 'This file is not on this device any more.' })
     return
@@ -106,18 +126,30 @@ async function load(index: number, autoplay = true) {
     navigator.mediaSession.metadata = new MediaMetadata({ title: t.title, artist: t.artist, album: 'Kinspirit' })
   }
   set({ loading: false })
-  if (autoplay) await a.play().catch(() => set({ playing: false, error: 'Could not play this file.' }))
+  if (autoplay)
+    await a.play().catch((e: unknown) =>
+      set({
+        playing: false,
+        error:
+          e instanceof DOMException && e.name === 'NotAllowedError'
+            ? 'Tap play once more to start.'
+            : e instanceof DOMException && e.name === 'NotSupportedError'
+            ? "This audio can't be played on this phone. Its format may not be supported (try MP3 or M4A)."
+            : 'Could not play this file.',
+      }),
+    )
 }
 
 const toTrack = (m: AudioMeta): Track => ({ id: m.id, title: m.name, artist: `@${m.from}` })
 
 /** Plays `id`, with everything in `list` (or the whole library) as the queue. */
 export async function play(id: string, list?: AudioMeta[]) {
+  unlock()
   const metas = list ?? (await listAudio())
   const queue = metas.map(toTrack)
   const index = queue.findIndex((t) => t.id === id)
   if (index < 0) return
-  if (state.queue[state.index]?.id === id && el?.src) {
+  if (state.queue[state.index]?.id === id && hasTrack()) {
     set({ queue, index })
     return void toggle(true)
   }
@@ -130,7 +162,7 @@ export async function toggle(want?: boolean) {
   if (state.index < 0) return
   const shouldPlay = want ?? a.paused
   if (shouldPlay) {
-    if (!a.src) return load(state.index)
+    if (!hasTrack()) return load(state.index)
     await a.play().catch(() => {})
   } else a.pause()
 }

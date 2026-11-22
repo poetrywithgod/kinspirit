@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { ApiError, audioSaved, deleteServerFile, downloadAudioFile, myId, type Message } from './api'
 import { deleteAudio, listAudio, renameAudio, saveAudio, type AudioMeta } from './localdb'
 import { forget, renameInQueue } from './player'
+import { withAudioType } from './mime'
 
 const subs = new Set<() => void>()
 const notify = () => subs.forEach((f) => f())
@@ -50,7 +51,7 @@ function probeDuration(blob: Blob): Promise<number> {
 export async function downloadAudio(m: Message, from: string): Promise<void> {
   if (!m.file_path) throw new ApiError('gone', 'This file is no longer available.')
   try {
-    const blob = await downloadAudioFile(m.file_path)
+    const blob = withAudioType(await downloadAudioFile(m.file_path), m.file_name || m.body)
     const duration = await probeDuration(blob)
     await saveAudio(
       {
