@@ -1952,3 +1952,30 @@ html.in-call .chat {
 .sheet .danger { color: var(--error); }
 .sheet .cancel { justify-content: center; color: var(--text-muted); }
 .sheet-title { margin: 8px 14px 6px; font: 600 16px var(--font-heading); }
+
+/* ---- change photo in settings ---- */
+.avatar-change {
+  position: relative;
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  border-radius: 50%;
+  line-height: 0;
+}
+.avatar-change:disabled { opacity: 0.6; }
+.avatar-change-badge {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--on-primary);
+  border: 2px solid var(--sheet);
+  font-size: 12px;
+  line-height: 1;
+}

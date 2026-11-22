@@ -26,10 +26,12 @@ const TABS: { id: Tab; label: string; Icon: () => React.JSX.Element }[] = [
 function Shell({
   username,
   avatar,
+  onAvatarChange,
   onLogout: logout,
 }: {
   username: string
   avatar: string | null
+  onAvatarChange: (url: string) => void
   onLogout: () => void
 }) {
   const onLogout = () => {
@@ -127,7 +129,7 @@ function Shell({
         {tab === 'meetings' && <MeetingsTab />}
         {tab === 'contacts' && <ContactsTab onOpen={setChat} autoFocus={focusSearch} />}
         {tab === 'audio' && <AudioTab />}
-        {tab === 'settings' && <SettingsTab username={username} avatar={avatar} onLogout={onLogout} />}
+        {tab === 'settings' && <SettingsTab username={username} avatar={avatar} onAvatarChange={onAvatarChange} onLogout={onLogout} />}
       </main>
 
       {tab !== 'audio' && <MiniPlayer onOpen={() => setTab('audio')} />}
@@ -152,7 +154,12 @@ function Shell({
   )
 }
 
-export function AppShell(props: { username: string; avatar: string | null; onLogout: () => void }) {
+export function AppShell(props: {
+  username: string
+  avatar: string | null
+  onAvatarChange: (url: string) => void
+  onLogout: () => void
+}) {
   return (
     <>
       <Shell {...props} />

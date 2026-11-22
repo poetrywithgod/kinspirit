@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ApiError, consumeAuthRedirect, currentSession, getMyProfile, signIn, signOut, signUp, type LoginResult } from './api'
+import { ApiError, cacheProfile, cachedProfile, consumeAuthRedirect, currentSession, getMyProfile, signIn, signOut, signUp, type LoginResult } from './api'
 import { AuthLayout } from './AuthLayout'
 import { AppShell } from './app/AppShell'
 import { PatternLayer } from './PatternLayer'
@@ -337,13 +337,32 @@ export default function App() {
       if (error) setNotice(error)
       const session = fromLink ?? currentSession()
       if (!session) return
-      const profile = await getMyProfile().catch((e: unknown) => (e instanceof ApiError && e.code === 'network' ? undefined : null))
-      if (profile === undefined) return // offline: stay on the welcome screen
+      // Saved log-in: open the chats at once from the saved copy, then check with the server.
+      const cached = cachedProfile()
+      if (cached) {
+        setUsername(cached.username)
+        setAvatar(cached.avatar_url)
+        setScreen('home')
+      }
+      let profile
+      try {
+        profile = await getMyProfile()
+      } catch (e) {
+        if (e instanceof ApiError && e.code === 'no_session') {
+          // The server says this log-in is over.
+          cacheProfile(null)
+          setScreen('welcome')
+          setNotice('Your session ended. Please log in again.')
+        }
+        return // offline or busy: stay where we are
+      }
       if (profile) {
         setUsername(profile.username)
         setAvatar(profile.avatar_url)
+        cacheProfile(profile)
         setScreen('home')
-      } else if (fromLink) {
+      } else if (!cached) {
+        // Signed up but never finished the profile.
         setEmail(session.user.email ?? '')
         setPhone(String(session.user.user_metadata?.phone ?? ''))
         setScreen('verifyPhone')
@@ -388,6 +407,7 @@ export default function App() {
             } else {
               setUsername(r.username)
               setAvatar(r.avatar)
+              cacheProfile({ username: r.username, avatar_url: r.avatar })
               setScreen('home')
             }
           }}
@@ -410,6 +430,7 @@ export default function App() {
           onDone={(p) => {
             setUsername(p.username)
             setAvatar(p.photo)
+            cacheProfile({ username: p.username, avatar_url: null })
             setScreen('home')
           }}
         />
@@ -419,6 +440,10 @@ export default function App() {
         <AppShell
           username={username}
           avatar={avatar}
+          onAvatarChange={(url) => {
+            setAvatar(url)
+            cacheProfile({ username, avatar_url: url })
+          }}
           onLogout={() => {
             void signOut().finally(() => {
               setAvatar(null)

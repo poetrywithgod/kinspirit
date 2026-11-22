@@ -23,7 +23,10 @@ export async function signUp(email: string, password: string, phone: string): Pr
 
 export { currentSession }
 
-export const signOut = () => auth.signOut()
+export const signOut = async () => {
+  cacheProfile(null)
+  await auth.signOut()
+}
 
 export const sendEmailCode = (email: string) => auth.resendSignupCode(email)
 
@@ -91,6 +94,45 @@ export async function saveProfile(p: { username: string; phone: string; photo: s
     phone: p.phone || null,
     ...(avatar_url ? { avatar_url } : {}),
   })
+}
+
+/** Replaces my profile photo (a cropped picture from the cropper). Returns the new public address. */
+export async function updateAvatar(photo: string): Promise<string> {
+  const s = currentSession()
+  if (!s) throw new ApiError('no_session', 'Please log in again.')
+  const blob = await (await fetch(photo)).blob()
+  const url = await storage.uploadAvatar(s.user.id, blob)
+  await db.update('profiles', s.user.id, { avatar_url: url })
+  return url
+}
+
+/* A copy of my username and photo address, so the app opens straight to the chats
+   even when the connection is slow or the server is busy. */
+const PROFILE_KEY = 'kinspirit.profile'
+
+export function cachedProfile(): Profile | null {
+  const s = currentSession()
+  if (!s) return null
+  try {
+    const c = JSON.parse(localStorage.getItem(PROFILE_KEY) ?? 'null') as (Profile & { id: string }) | null
+    return c && c.id === s.user.id && c.username ? { username: c.username, avatar_url: c.avatar_url } : null
+  } catch {
+    return null
+  }
+}
+
+export function cacheProfile(p: Profile | null): void {
+  try {
+    const s = currentSession()
+    if (!p || !s) localStorage.removeItem(PROFILE_KEY)
+    else
+      localStorage.setItem(
+        PROFILE_KEY,
+        JSON.stringify({ id: s.user.id, username: p.username, avatar_url: p.avatar_url?.startsWith('http') ? p.avatar_url : null }),
+      )
+  } catch {
+    // storage blocked: the app just asks the server each time
+  }
 }
 
 /* ---------- Phone verification (DEV STUB) ---------- */

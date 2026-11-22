@@ -231,21 +231,52 @@ export const auth = {
   },
 }
 
-async function accessToken(): Promise<string> {
-  if (!session) throw new ApiError('no_session', 'Please log in again.')
-  if (session.expires_at - 60 > Date.now() / 1000) return session.access_token
+// Refresh tokens are single-use. If several requests refresh at once (the chat polls in parallel),
+// all but one would fail and wrongly log the person out. So only one refresh runs at a time,
+// and another open tab's newer session is adopted instead of refreshing again.
+let refreshing: Promise<string> | null = null
+
+const fresh = (s: Session | null) => !!s && s.expires_at - 60 > Date.now() / 1000
+
+async function refreshNow(): Promise<string> {
+  const stored = load()
+  if (stored && fresh(stored)) {
+    session = stored
+    return stored.access_token
+  }
+  const token = (stored ?? session)?.refresh_token
+  if (!token) throw new ApiError('no_session', 'Please log in again.')
   try {
     const s = toSession(
-      await call<TokenResponse>('/auth/v1/token?grant_type=refresh_token', {
-        body: { refresh_token: session.refresh_token },
-      }),
+      await call<TokenResponse>('/auth/v1/token?grant_type=refresh_token', { body: { refresh_token: token } }),
     )
     save(s)
     return s.access_token
   } catch (e) {
-    if (e instanceof ApiError && e.code !== 'network') save(null)
-    throw new ApiError('no_session', 'Your session ended. Please log in again.')
+    // Only a clear "this log-in is no longer valid" answer ends the session.
+    // A bad connection or a server hiccup keeps it, so the next try can succeed.
+    if (e instanceof ApiError && (e.status === 400 || e.status === 401 || e.status === 403)) {
+      const again = load()
+      if (again && again.refresh_token !== token) {
+        session = again // another tab already refreshed
+        if (fresh(again)) return again.access_token
+      } else {
+        save(null)
+        throw new ApiError('no_session', 'Your session ended. Please log in again.')
+      }
+    }
+    if (e instanceof ApiError && e.code === 'network') throw e
+    throw new ApiError('server_busy', 'The server is busy. Try again in a moment.', e instanceof ApiError ? e.status : 0)
   }
+}
+
+async function accessToken(): Promise<string> {
+  if (!session) throw new ApiError('no_session', 'Please log in again.')
+  if (fresh(session)) return session.access_token
+  refreshing ??= refreshNow().finally(() => {
+    refreshing = null
+  })
+  return refreshing
 }
 
 function setupHint(e: unknown): never {
@@ -280,6 +311,20 @@ export const db = {
     try {
       await call(`/rest/v1/${table}`, {
         body: row,
+        token: await accessToken(),
+        headers: { Prefer: 'return=minimal' },
+      })
+    } catch (e) {
+      return setupHint(e)
+    }
+  },
+
+  /** Changes some columns of one row (by id). */
+  async update(table: string, id: string, patch: Record<string, unknown>): Promise<void> {
+    try {
+      await call(`/rest/v1/${table}?id=eq.${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: patch,
         token: await accessToken(),
         headers: { Prefer: 'return=minimal' },
       })
