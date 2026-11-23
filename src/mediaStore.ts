@@ -1,6 +1,6 @@
 // Photos, videos and files kept on this device. Once saved they stay until the person deletes them.
 import { useSyncExternalStore } from 'react'
-import { audioSaved, deleteServerFile, downloadAudioFile, type Message } from './api'
+import { audioSaved, deleteServerFile, downloadAudioFile, myId, type Message } from './api'
 import { getMediaRecord, listMediaIds, saveMediaRecord } from './localdb'
 
 let ids = new Set<string>()
@@ -30,9 +30,23 @@ export const useMediaIds = (): Set<string> =>
     () => ids,
   )
 
+const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('kinspirit-media') : null
+if (channel) {
+  channel.onmessage = (e: MessageEvent<{ uid: string; id: string }>) => {
+    if (e.data?.uid !== myId() || ids.has(e.data.id)) return
+    ids = new Set(ids).add(e.data.id)
+    emit()
+  }
+}
+
 const remember = (id: string) => {
   ids = new Set(ids).add(id)
   emit()
+  try {
+    channel?.postMessage({ uid: myId(), id })
+  } catch {
+    // another window will catch up on its next start
+  }
 }
 
 export const getMediaBlob = async (id: string): Promise<Blob | undefined> => (await getMediaRecord(id).catch(() => undefined))?.blob

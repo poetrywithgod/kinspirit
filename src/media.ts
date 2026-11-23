@@ -39,6 +39,18 @@ const TYPES: Record<string, string> = {
 /** The file's own type, or a good guess from its name when the phone did not say. */
 export const typeOf = (f: { type?: string; name: string }) => f.type || TYPES[ext(f.name)] || 'application/octet-stream'
 
+/** Only one window handles a picked file: a second window (or a repeated event) for the same file within 6 seconds is ignored. */
+export function claimPick(signature: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (!navigator.locks) return resolve(true)
+    void navigator.locks.request(`kin-pick-${signature}`, { ifAvailable: true }, async (lock) => {
+      if (!lock) return resolve(false)
+      resolve(true)
+      await new Promise((r) => setTimeout(r, 6000))
+    })
+  })
+}
+
 export type Prepared = { blob: Blob; name: string; type: string; width?: number; height?: number; duration?: number }
 
 const loadBitmap = async (f: Blob) => {

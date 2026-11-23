@@ -14,7 +14,7 @@ import {
 import { acceptIncoming, declineIncoming, useIncoming } from '../incoming'
 import { fmtDur } from '../time'
 import { Avatar } from './Avatar'
-import { DotsIcon, DownIcon, HangupIcon, AnswerIcon, LockIcon, MicIcon, MicOffIcon, PhoneIcon, RecordIcon } from './icons'
+import { CloseIcon, DotsIcon, DownIcon, HangupIcon, AnswerIcon, LockIcon, MicIcon, MicOffIcon, PhoneIcon, RecordIcon } from './icons'
 
 function useElapsed(since: number) {
   const [now, setNow] = useState(Date.now())
@@ -39,15 +39,18 @@ export function CallLayer() {
 
   // Notes (like "Everyone has been muted") fade away by themselves.
   useEffect(() => {
-    if (!c.notice) return
-    const t = setTimeout(clearCallError, 4500)
+    if (!c.notice && !c.error) return
+    const t = setTimeout(clearCallError, c.error ? 8000 : 4500)
     return () => clearTimeout(t)
-  }, [c.notice])
+  }, [c.notice, c.error])
 
   if (c.phase === 'idle') {
     return c.error ? (
-      <div className="toast" role="alert" onClick={clearCallError}>
-        {c.error}
+      <div className="toast" role="alert">
+        <span>{c.error}</span>
+        <button type="button" className="toast-x" aria-label="Close" onClick={clearCallError}>
+          <CloseIcon />
+        </button>
       </div>
     ) : null
   }
@@ -187,8 +190,11 @@ export function IncomingLayer() {
   }, [msg])
   if (!c) {
     return msg ? (
-      <div className="toast" role="alert" onClick={() => setMsg('')}>
-        {msg}
+      <div className="toast" role="alert">
+        <span>{msg}</span>
+        <button type="button" className="toast-x" aria-label="Close" onClick={() => setMsg('')}>
+          <CloseIcon />
+        </button>
       </div>
     ) : null
   }

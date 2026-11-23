@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ApiError, MAX_AUDIO_BYTES, MAX_MEDIA_BYTES, audioPath, deleteMessage, editMessage, fetchMessages, markRead, myId, sendAudio, sendMedia, sendMessage, sendVoice, groupMembers, type Message, type Person } from '../api'
-import { isImage, isVideo, prepareImage, probeVideo, typeOf, type Prepared } from '../media'
+import { claimPick, isImage, isVideo, prepareImage, probeVideo, typeOf, type Prepared } from '../media'
 import { keepOwnMedia } from '../mediaStore'
 import { Lightbox } from './Lightbox'
 import { MediaBubble } from './MediaBubble'
@@ -347,6 +347,7 @@ export function ChatView({
     const picked = Array.from(list ?? [])
     setAttach(false)
     for (const file of picked) {
+      if (!(await claimPick(`${chat.id}|${mode}|${file.name}|${file.size}|${file.lastModified}`))) continue
       if (file.size > MAX_MEDIA_BYTES) {
         setError(`“${file.name}” is too big. The limit is 50 MB.`)
         continue
@@ -535,7 +536,14 @@ export function ChatView({
 
       <div className="chat-list" ref={list} onScroll={onScroll}>
         {!loaded && !error && <p className="muted center">Loading…</p>}
-        {error && <p className="error center">{error}</p>}
+        {error && (
+          <p className="error center error-x">
+            <span>{error}</span>
+            <button type="button" className="toast-x" aria-label="Close" onClick={() => setError('')}>
+              <CloseIcon />
+            </button>
+          </p>
+        )}
         {loaded && messages.length === 0 && <p className="muted center">No messages yet. Say hello 👋</p>}
         {messages.map((m) => {
           const mine = m.sender_id === me

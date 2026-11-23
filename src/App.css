@@ -2079,3 +2079,22 @@ button.sender { padding: 0; border: 0; background: none; font: inherit; font-wei
 .profile-action { margin-top: 12px; }
 .avatar-tap { display: inline-flex; border-radius: 50%; flex: none; }
 .bubble.mine .link-btn { color: inherit; }
+
+/* ---- banners can be closed ---- */
+.toast { display: flex; align-items: center; gap: 10px; text-align: left; }
+.toast > span { flex: 1; min-width: 0; }
+.toast-x {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+  color: inherit;
+}
+.toast-x svg { width: 16px; height: 16px; }
+.error-x { display: flex; align-items: center; justify-content: center; gap: 8px; }
+.error-x .toast-x { background: rgba(0, 0, 0, 0.08); }
