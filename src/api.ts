@@ -1,7 +1,9 @@
+import { disablePush } from './push'
 // The app talks to the server only through this file.
 // Email sign-up, log-in, username and profile are REAL (Supabase).
 // Phone verification is still a DEV STUB: it needs a WhatsApp webhook on the server.
 import { WHATSAPP_NUMBER } from './config'
+import { audioType } from './mime'
 import { EMAIL_OTP_LENGTH } from './config'
 import { ApiError, auth, consumeAuthRedirect, currentSession, db, functions, onSessionFromOtherTab, storage } from './supabase'
 
@@ -25,6 +27,7 @@ export { currentSession }
 
 export const signOut = async () => {
   cacheProfile(null)
+  await disablePush().catch(() => undefined)
   await auth.signOut()
 }
 
@@ -182,7 +185,7 @@ export type Message = {
   sender_id: string
   body: string
   created_at: string
-  kind?: 'text' | 'audio' | 'voice' | 'call' | 'image' | 'video' | 'file'
+  kind?: 'text' | 'audio' | 'voice' | 'call' | 'image' | 'video' | 'file' | 'sticker'
   duration?: number | null
   file_path?: string | null
   file_name?: string | null
@@ -228,7 +231,7 @@ export async function fetchMessages(cid: string, after?: string): Promise<Messag
 }
 
 /** Sending the same message id twice is safe, so retrying never makes duplicates. */
-export async function sendMessage(m: { id: string; conversation_id: string; body: string; kind?: 'text' | 'call'; reply_to?: string | null }): Promise<void> {
+export async function sendMessage(m: { id: string; conversation_id: string; body: string; kind?: 'text' | 'call' | 'sticker'; reply_to?: string | null }): Promise<void> {
   const s = currentSession()
   if (!s) throw new ApiError('no_session', 'Please log in again.')
   try {
@@ -253,7 +256,9 @@ export async function sendAudio(m: { id: string; conversation_id: string; file: 
   const s = currentSession()
   if (!s) throw new ApiError('no_session', 'Please log in again.')
   const path = audioPath(m.conversation_id, m.id, m.file.name)
-  await storage.uploadFile(path, m.file, m.file.type || 'audio/mpeg')
+  // Phones often leave the type empty, so it is worked out from the file's name.
+  const type = audioType(m.file.name, m.file.type) || 'audio/mpeg'
+  await storage.uploadFile(path, m.file, type)
   try {
     await db.insert('messages', {
       id: m.id,
@@ -264,6 +269,7 @@ export async function sendAudio(m: { id: string; conversation_id: string; file: 
       file_path: path,
       file_name: m.file.name.slice(0, 200) || 'Audio',
       file_size: m.file.size,
+      file_type: type,
     })
   } catch (e) {
     if (e instanceof ApiError && e.code === '23505') return
@@ -438,3 +444,21 @@ export async function deleteMessage(mid: string): Promise<void> {
   const path = await db.rpc<string | null>('delete_message', { mid })
   if (path) await storage.deleteFile(path).catch(() => undefined)
 }
+
+// ---- Block & report ----
+export const blockUserRpc = async (who: string) => void (await db.rpc<unknown>('block_user', { who }))
+export const unblockUserRpc = async (who: string) => void (await db.rpc<unknown>('unblock_user', { who }))
+export const myBlocks = () => db.rpc<Person[]>('my_blocks', {})
+export const reportUserRpc = async (who: string, reason: string, mid?: string, cid?: string) =>
+  void (await db.rpc<unknown>('report_user', { who, reason, mid: mid ?? null, cid: cid ?? null }))
+
+// ---- Reactions and the general group ----
+export type Reaction = { message_id: string; user_id: string; emoji: string }
+export const listReactions = (cid: string) => db.rpc<Reaction[]>('conversation_reactions', { cid })
+export const reactTo = async (mid: string, emoji: string | null) => void (await db.rpc<unknown>('react', { mid, new_emoji: emoji }))
+export const joinGeneral = () => db.rpc<string>('join_general', {})
+
+// ---- Find friends by phone number ----
+export const matchPhones = (nums: string[]) => db.rpc<Person[]>('match_phones', { nums })
+export const setDiscoverable = async (on_off: boolean) => void (await db.rpc<unknown>('set_discoverable', { on_off }))
+export const myDiscoverable = () => db.rpc<boolean>('my_discoverable', {})

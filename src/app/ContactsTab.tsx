@@ -11,6 +11,7 @@ import { Avatar } from './Avatar'
 import type { ChatTarget } from './ChatsTab'
 import { SearchIcon } from './icons'
 import { ProfileView } from './ProfileView'
+import { FindFriends } from './FindFriends'
 
 let cache: Person[] | null = null
 
@@ -21,6 +22,7 @@ export function ContactsTab({ onOpen, autoFocus }: { onOpen: (c: ChatTarget) => 
   const [searching, setSearching] = useState(false)
   const [busy, setBusy] = useState('')
   const [profile, setProfile] = useState<Person | null>(null)
+  const [finding, setFinding] = useState(false)
   const [error, setError] = useState('')
   const input = useRef<HTMLInputElement>(null)
 
@@ -119,6 +121,10 @@ export function ContactsTab({ onOpen, autoFocus }: { onOpen: (c: ChatTarget) => 
 
       {error && <p className="error center">{error}</p>}
 
+      <button type="button" className="btn find-btn" onClick={() => setFinding(true)}>
+        Find friends from my contacts
+      </button>
+
       <h2 className="section-title">{showingResults ? 'People' : 'My contacts'}</h2>
 
       {contacts === null && !error && <p className="muted center">Loading…</p>}
@@ -168,6 +174,21 @@ export function ContactsTab({ onOpen, autoFocus }: { onOpen: (c: ChatTarget) => 
           </li>
         ))}
       </ul>
+      {finding && (
+        <FindFriends
+          mine={known}
+          onClose={() => setFinding(false)}
+          onAdded={(p) => {
+            const next = [...(contacts ?? []), p].sort((a, b) => a.username.localeCompare(b.username))
+            cache = next
+            setContacts(next)
+          }}
+          onMessage={(p) => {
+            setFinding(false)
+            void open(p)
+          }}
+        />
+      )}
       {profile && (
         <ProfileView
           person={profile}

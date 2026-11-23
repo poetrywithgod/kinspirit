@@ -4,6 +4,7 @@ import { ApiError, audioSaved, deleteServerFile, downloadAudioFile, myId, type M
 import { deleteAudio, listAudio, renameAudio, saveAudio, type AudioMeta } from './localdb'
 import { forget, renameInQueue } from './player'
 import { withAudioType } from './mime'
+import { dataSaver } from './dataSaver'
 
 const subs = new Set<() => void>()
 const notify = () => subs.forEach((f) => f())
@@ -105,13 +106,14 @@ const writeFlag = (what: string, on: boolean) => {
   }
 }
 /** Photos are small after shrinking, so they are saved automatically unless switched off. */
-export const autoSavePhotos = () => readFlag('photos', true)
+export const autoSavePhotos = () => !dataSaver() && readFlag('photos', true)
 export const setAutoSavePhotos = (on: boolean) => writeFlag('photos', on)
 /** Videos and documents can be big, so they wait for a tap unless switched on. */
-export const autoSaveBig = () => readFlag('big', false)
+export const autoSaveBig = () => !dataSaver() && readFlag('big', false)
 export const setAutoSaveBig = (on: boolean) => writeFlag('big', on)
 /** Audio files (not voice notes) are saved automatically unless the person switches it off to save data. */
 export const autoSaveAudio = (): boolean => {
+  if (dataSaver()) return false
   try {
     return localStorage.getItem(autoKey()) !== 'off'
   } catch {

@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import { refreshBlocks } from '../blocks'
+import { joinGeneral, listConversations, myId } from '../api'
+import { resyncPush } from '../push'
 import { PatternLayer } from '../PatternLayer'
 import { NewGroup } from './NewGroup'
 import { ChatView } from './ChatView'
@@ -44,13 +47,53 @@ function Shell({
     leaveCall()
     logout()
   }
+  useEffect(() => void refreshBlocks(), [])
+  useEffect(() => void resyncPush(), [])
+  // Everyone starts in the general group (once per phone; leaving it sticks).
+  useEffect(() => {
+    const key = `kinspirit.general.${myId()}`
+    try {
+      if (localStorage.getItem(key)) return
+    } catch {
+      return
+    }
+    joinGeneral()
+      .then(() => {
+        try {
+          localStorage.setItem(key, '1')
+        } catch {
+          /* storage blocked */
+        }
+      })
+      .catch(() => undefined)
+  }, [])
+  const [chat, setChat] = useState<ChatTarget | null>(null)
+  // Tapping a notification opens that chat.
+  useEffect(() => {
+    const open = async (cid: string) => {
+      try {
+        const c = (await listConversations()).find((x) => x.id === cid)
+        if (!c) return
+        setChat({ id: c.id, name: c.kind === 'direct' ? `@${c.other_username ?? 'unknown'}` : (c.title ?? 'Group'), avatar: c.other_avatar, kind: c.kind, ...(c.other_id ? { userId: c.other_id } : {}) })
+      } catch {
+        /* stay where we are */
+      }
+    }
+    const q = new URLSearchParams(location.search).get('chat')
+    if (q) {
+      void open(q)
+      history.replaceState(null, '', location.pathname)
+    }
+    const onMsg = (e: MessageEvent) => e.data?.type === 'open-chat' && void open(String(e.data.cid))
+    navigator.serviceWorker?.addEventListener('message', onMsg)
+    return () => navigator.serviceWorker?.removeEventListener('message', onMsg)
+  }, [])
   useEffect(() => {
     void protectStorage()
   }, [])
   usePolling(() => syncIncomingMedia(), 15000)
-  usePolling(() => pollIncoming(), 3000)
+  usePolling(() => pollIncoming(), 3000, true, true)
   const [tab, setTab] = useState<Tab>('chats')
-  const [chat, setChat] = useState<ChatTarget | null>(null)
   const [menu, setMenu] = useState(false)
   const [newGroup, setNewGroup] = useState(false)
   const [focusSearch, setFocusSearch] = useState(false)

@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ApiError, MAX_AUDIO_BYTES, MAX_MEDIA_BYTES, audioPath, deleteMessage, editMessage, fetchMessages, markRead, myId, sendAudio, sendMedia, sendMessage, sendVoice, groupMembers, type Message, type Person } from '../api'
-import { claimPick, isImage, isVideo, prepareImage, probeVideo, typeOf, type Prepared } from '../media'
+import { AUDIO_ACCEPT, DOCUMENT_ACCEPT, claimPick, isImage, readable, isVideo, prepareImage, probeVideo, typeOf, type Prepared } from '../media'
 import { keepOwnMedia } from '../mediaStore'
 import { Lightbox } from './Lightbox'
 import { MediaBubble } from './MediaBubble'
 import { ProfileView } from './ProfileView'
+import { ReportSheet } from './ReportSheet'
+import { QUICK_REACTIONS, STICKERS } from '../stickers'
+import { listReactions, reactTo, type Reaction } from '../api'
+import { useBlocks } from '../blocks'
 import { downloadAudio, keepOwnAudio, useLibrary } from '../library'
 import { syncIncomingMedia } from '../mediaSync'
 import { currentTrack, play, toggle, usePlayer } from '../player'
@@ -79,6 +83,7 @@ function callNote(m: Message, mine: boolean, who: string): string {
 function preview(m: Message | undefined): string {
   if (!m) return 'Original message'
   if (m.deleted_at) return '🚫 Message deleted'
+  if (m.kind === 'sticker') return `${m.body} Sticker`
   if (m.kind === 'voice') return '🎤 Voice note'
   if (m.kind === 'audio') return `🎵 ${m.file_name ?? m.body}`
   if (m.kind === 'image') return '📷 Photo'
@@ -109,11 +114,17 @@ export function ChatView({
   const [attach, setAttach] = useState(false)
   const [viewer, setViewer] = useState<{ src: string; name: string; save?: () => void } | null>(null)
   const [profile, setProfile] = useState<Person | null>(null)
+  const [reporting, setReporting] = useState<Message | null>(null)
+  const [reactions, setReactions] = useState<Reaction[]>([])
+  const [stickers, setStickers] = useState(false)
+  const { isBlocked } = useBlocks()
+  const iBlocked = !isGroup && isBlocked(chat.userId)
   const [people, setPeople] = useState<Map<string, Person>>(new Map())
   const [progress, setProgress] = useState<Record<string, number>>({})
   const media = useRef(new Map<string, Prepared>())
   const photoPicker = useRef<HTMLInputElement>(null)
   const docPicker = useRef<HTMLInputElement>(null)
+  const anyPicker = useRef<HTMLInputElement>(null)
   const asked = useRef(0)
   const [messages, setMessages] = useState<Message[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -179,6 +190,33 @@ export function ChatView({
     }
   }, 4000)
 
+  usePolling(async () => {
+    try {
+      setReactions(await listReactions(chat.id))
+    } catch {
+      /* reactions are not set up yet, or offline: show none */
+    }
+  }, 5000)
+
+  const react = (m: Message, emoji: string) => {
+    const mine = reactions.find((r) => r.message_id === m.id && r.user_id === me)
+    const next = mine?.emoji === emoji ? null : emoji
+    setReactions((cur) => {
+      const rest = cur.filter((r) => !(r.message_id === m.id && r.user_id === me))
+      return next ? [...rest, { message_id: m.id, user_id: me, emoji: next }] : rest
+    })
+    reactTo(m.id, next).catch(() => setError('Could not add that reaction.'))
+  }
+
+  const sendSticker = (emoji: string) => {
+    const m: Message = { id: newId(), conversation_id: chat.id, sender_id: me, body: emoji, kind: 'sticker', created_at: new Date().toISOString(), reply_to: replyTo?.id ?? null, status: 'sending' }
+    stick.current = true
+    setStickers(false)
+    setMessages((cur) => merge(cur, [m]))
+    setReplyTo(null)
+    push(m)
+  }
+
   useEffect(() => {
     void markRead(chat.id).catch(() => {})
   }, [chat.id])
@@ -232,7 +270,7 @@ export function ChatView({
               duration: media.current.get(m.id)!.duration,
               onProgress: (f) => setProgress((cur) => ({ ...cur, [m.id]: f })),
             })
-          : sendMessage({ id: m.id, conversation_id: m.conversation_id, body: m.body, reply_to: m.reply_to })
+          : sendMessage({ id: m.id, conversation_id: m.conversation_id, body: m.body, reply_to: m.reply_to, ...(m.kind === 'sticker' ? { kind: 'sticker' as const } : {}) })
       job
         .then(() => {
           setMessages((cur) => cur.map((x) => (x.id === m.id ? { ...x, status: undefined } : x)))
@@ -350,6 +388,10 @@ export function ChatView({
       if (!(await claimPick(`${chat.id}|${mode}|${file.name}|${file.size}|${file.lastModified}`))) continue
       if (file.size > MAX_MEDIA_BYTES) {
         setError(`“${file.name}” is too big. The limit is 50 MB.`)
+        continue
+      }
+      if (!(await readable(file))) {
+        setError(`“${file.name}” could not be read. If it is in the cloud, download it to this phone first, then try again.`)
         continue
       }
       if (mode === 'audio') {
@@ -514,6 +556,7 @@ export function ChatView({
           type="button"
           className="icon-btn call-btn"
           aria-label={inThisCall ? 'Return to the call' : 'Start a call'}
+          disabled={iBlocked && !inThisCall}
           onClick={() => (inThisCall ? showCall(true) : void startCall(chat))}
         >
           <PhoneIcon />
@@ -569,7 +612,7 @@ export function ChatView({
           return (
             <div key={m.id} data-mid={m.id} className={`bubble-row${mine ? ' mine' : ''}`}>
               <div
-                className={`bubble${mine ? ' mine' : ''}${m.status === 'failed' ? ' failed' : ''}${m.deleted_at ? ' deleted' : ''}`}
+                className={`bubble${mine ? ' mine' : ''}${m.kind === 'sticker' && !m.deleted_at ? ' sticker-bubble' : ''}${m.status === 'failed' ? ' failed' : ''}${m.deleted_at ? ' deleted' : ''}`}
                 onContextMenu={(e) => {
                   if (m.deleted_at || m.status) return
                   e.preventDefault()
@@ -644,11 +687,29 @@ export function ChatView({
                   </span>
                 ) : m.kind === 'image' || m.kind === 'video' || m.kind === 'file' ? (
                   <MediaBubble m={m} onView={(src, name, saveIt) => setViewer({ src, name, save: saveIt })} />
+                ) : m.kind === 'sticker' ? (
+                  <span className="sticker" aria-label={`Sticker ${m.body}`}>{m.body}</span>
                 ) : (
                   <span className="bubble-text">{m.body}</span>
                 )}
                   </>
                 )}
+                {!m.deleted_at && !m.status && (() => {
+                  const rs = reactions.filter((r) => r.message_id === m.id)
+                  if (!rs.length) return null
+                  const groups = new Map<string, number>()
+                  rs.forEach((r) => groups.set(r.emoji, (groups.get(r.emoji) ?? 0) + 1))
+                  const mineE = rs.find((r) => r.user_id === me)?.emoji
+                  return (
+                    <span className="reactions">
+                      {[...groups].map(([e, n]) => (
+                        <button key={e} type="button" className={`react-chip${mineE === e ? ' on' : ''}`} aria-label={`${e} ${n}`} onClick={() => react(m, e)}>
+                          {e}{n > 1 ? ` ${n}` : ''}
+                        </button>
+                      ))}
+                    </span>
+                  )
+                })()}
                 <span className="bubble-meta">
                   {m.status === 'sending' ? (progress[m.id] ? `Sending ${Math.round(progress[m.id] * 100)}%` : 'Sending…') : m.status === 'failed' ? '' : `${m.edited_at && !m.deleted_at ? 'Edited · ' : ''}${clock(m.created_at)}`}
                   {m.status === 'failed' && (
@@ -666,14 +727,17 @@ export function ChatView({
       {attach && (
         <div className="sheet-backdrop" role="presentation" onClick={() => setAttach(false)}>
           <div className="sheet" role="menu" onClick={(e) => e.stopPropagation()}>
-            <button type="button" role="menuitem" onClick={() => photoPicker.current?.click()}>
+            <button type="button" role="menuitem" onClick={() => { photoPicker.current?.click(); setAttach(false) }}>
               <ImageIcon /> Photo or video
             </button>
-            <button type="button" role="menuitem" onClick={() => picker.current?.click()}>
-              <MusicIcon /> Audio
+            <button type="button" role="menuitem" onClick={() => { picker.current?.click(); setAttach(false) }}>
+              <MusicIcon /> Audio file
             </button>
-            <button type="button" role="menuitem" onClick={() => docPicker.current?.click()}>
-              <FileIcon /> Document or any file
+            <button type="button" role="menuitem" onClick={() => { docPicker.current?.click(); setAttach(false) }}>
+              <FileIcon /> Document (PDF, Word, Excel…)
+            </button>
+            <button type="button" role="menuitem" onClick={() => { anyPicker.current?.click(); setAttach(false) }}>
+              <ClipIcon /> Any other file
             </button>
             <button type="button" role="menuitem" className="cancel" onClick={() => setAttach(false)}>
               Cancel
@@ -683,6 +747,14 @@ export function ChatView({
       )}
 
       {viewer && <Lightbox src={viewer.src} name={viewer.name} onClose={() => setViewer(null)} onSave={viewer.save} />}
+      {reporting && (
+        <ReportSheet
+          person={{ id: reporting.sender_id, username: names.get(reporting.sender_id) ?? chat.name.replace(/^@/, ''), avatar_url: people.get(reporting.sender_id)?.avatar_url ?? null }}
+          messageId={reporting.id}
+          conversationId={chat.id}
+          onClose={() => setReporting(null)}
+        />
+      )}
       {profile && <ProfileView person={profile} onClose={() => setProfile(null)} />}
 
       {(replyTo || editing) && !rec && (
@@ -709,6 +781,15 @@ export function ChatView({
       {menu && (
         <div className="sheet-backdrop" role="presentation" onClick={() => setMenu(null)}>
           <div className="sheet" role="menu" onClick={(e) => e.stopPropagation()}>
+            {menu.kind !== 'call' && (
+              <div className="quick-react" role="group" aria-label="React">
+                {QUICK_REACTIONS.map((e) => (
+                  <button key={e} type="button" aria-label={`React ${e}`} onClick={() => { react(menu, e); setMenu(null) }}>
+                    {e}
+                  </button>
+                ))}
+              </div>
+            )}
             <button
               type="button"
               role="menuitem"
@@ -744,6 +825,18 @@ export function ChatView({
                 }}
               >
                 <EditIcon /> Edit
+              </button>
+            )}
+            {menu.sender_id !== me && menu.kind !== 'call' && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setReporting(menu)
+                  setMenu(null)
+                }}
+              >
+                Report
               </button>
             )}
             {(menu.sender_id === me || (isGroup && amAdmin)) && (
@@ -782,7 +875,23 @@ export function ChatView({
         </div>
       )}
 
-      {rec ? (
+      {stickers && !iBlocked && !rec && (
+        <div className="sticker-panel" role="group" aria-label="Stickers">
+          {STICKERS.map((e) => (
+            <button key={e} type="button" onClick={() => sendSticker(e)}>
+              {e}
+            </button>
+          ))}
+        </div>
+      )}
+      {iBlocked ? (
+        <div className="blocked-bar" role="status">
+          You blocked {chat.name}. Open their profile to unblock.
+          <button type="button" className="link-btn" onClick={() => chat.userId && setProfile({ id: chat.userId, username: chat.name.replace(/^@/, ''), avatar_url: chat.avatar })}>
+            Profile
+          </button>
+        </div>
+      ) : rec ? (
         <div className="composer recording" role="status" aria-label="Recording a voice note">
           <button type="button" className="icon-btn" aria-label="Cancel recording" onClick={() => {
               rec.cancel()
@@ -808,7 +917,7 @@ export function ChatView({
         <input
           ref={picker}
           type="file"
-          accept="audio/*,.mp3,.m4a,.aac,.ogg,.opus,.wav,.flac,.amr,.wma"
+          accept={AUDIO_ACCEPT}
           multiple
           hidden
           onChange={(e) => {
@@ -830,6 +939,17 @@ export function ChatView({
         <input
           ref={docPicker}
           type="file"
+          accept={DOCUMENT_ACCEPT}
+          multiple
+          hidden
+          onChange={(e) => {
+            void pickFiles(e.target.files, 'document')
+            e.target.value = ''
+          }}
+        />
+        <input
+          ref={anyPicker}
+          type="file"
           multiple
           hidden
           onChange={(e) => {
@@ -839,6 +959,9 @@ export function ChatView({
         />
         <button type="button" className="icon-btn attach" aria-label="Attach a photo, video, audio or file" onClick={() => setAttach(true)}>
           <ClipIcon />
+        </button>
+        <button type="button" className="icon-btn attach" aria-label="Stickers" aria-expanded={stickers} onClick={() => setStickers((v) => !v)}>
+          <span aria-hidden="true" style={{ fontSize: '1.4rem', lineHeight: 1 }}>🙂</span>
         </button>
         <textarea
           rows={1}

@@ -1,4 +1,5 @@
 import { ApiError } from './api'
+import { dataSaver } from './dataSaver'
 
 export type Recording = {
   stop: () => Promise<{ blob: Blob; seconds: number }>
@@ -23,7 +24,7 @@ export async function startRecording(): Promise<Recording> {
     )
   }
   const mimeType = TYPES.find((t) => MediaRecorder.isTypeSupported(t))
-  const rec = new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), audioBitsPerSecond: 24000 })
+  const rec = new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), audioBitsPerSecond: dataSaver() ? 16000 : 24000 })
   const chunks: Blob[] = []
   const started = Date.now()
   rec.ondataavailable = (e) => e.data.size > 0 && chunks.push(e.data)

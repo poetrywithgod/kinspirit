@@ -2,10 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { autoSaveAudio, autoSaveBig, autoSavePhotos, onLibraryChange, setAutoSaveAudio, setAutoSaveBig, setAutoSavePhotos } from '../library'
 import { protectStorage, storageInfo, type StorageInfo } from '../storage'
 import { fmtSize } from '../time'
-import { ApiError, updateAvatar } from '../api'
+import { ApiError, myDiscoverable, setDiscoverable, updateAvatar } from '../api'
 import { PhotoCropper } from '../PhotoCropper'
 import { applyTheme, getTheme, type ThemePref } from '../theme'
 import { Avatar } from './Avatar'
+import { disablePush, enablePush, pushState, type PushState } from '../push'
+import { setDataSaver, useDataSaver } from '../dataSaver'
+import { refreshBlocks, unblockPerson, useBlocks } from '../blocks'
 
 const OPTIONS: { id: ThemePref; label: string }[] = [
   { id: 'system', label: 'Match phone' },
@@ -59,6 +62,18 @@ export function SettingsTab({
       .finally(() => setPhotoBusy(false))
   }
 
+  const saver = useDataSaver()
+  const [disc, setDisc] = useState<boolean | null>(null)
+  useEffect(() => {
+    void myDiscoverable().then(setDisc).catch(() => undefined)
+  }, [])
+  const [push, setPush] = useState<PushState | null>(null)
+  const [pushBusy, setPushBusy] = useState(false)
+  useEffect(() => {
+    void pushState().then(setPush)
+  }, [])
+  const { blocked } = useBlocks()
+  useEffect(() => void refreshBlocks(), [])
   const [theme, setTheme] = useState<ThemePref>(getTheme())
   const [out, setOut] = useState(false)
 
@@ -146,6 +161,82 @@ export function SettingsTab({
           />
           <span>Save videos and documents automatically (they can be big; otherwise tap to download)</span>
         </label>
+      </div>
+
+      {disc !== null && (
+        <div className="settings-card">
+          <h2 className="section-title flush">Privacy</h2>
+          <label className="switch-row">
+            <input
+              type="checkbox"
+              checked={disc}
+              onChange={(e) => {
+                const v = e.target.checked
+                setDisc(v)
+                void setDiscoverable(v).catch(() => setDisc(!v))
+              }}
+            />
+            <span>Let people who have my phone number find me on Kinspirit</span>
+          </label>
+        </div>
+      )}
+
+      <div className="settings-card">
+        <h2 className="section-title flush">Notifications</h2>
+        {push === 'unsupported' ? (
+          <p className="muted">This browser cannot show notifications. On an iPhone, add Kinspirit to your Home Screen first (Share, then Add to Home Screen), then open it from there.</p>
+        ) : push === 'unconfigured' ? (
+          <p className="muted">Notifications are not switched on for this version of Kinspirit yet.</p>
+        ) : push === 'denied' ? (
+          <p className="muted">Notifications are blocked. Allow them for Kinspirit in your browser or phone settings, then come back here.</p>
+        ) : (
+          <>
+            <label className="switch-row">
+              <input
+                type="checkbox"
+                checked={push === 'on'}
+                disabled={push === null || pushBusy}
+                onChange={(e) => {
+                  setPushBusy(true)
+                  const go = e.target.checked ? enablePush() : disablePush().then(() => pushState())
+                  void go.then(setPush).catch(() => void pushState().then(setPush)).finally(() => setPushBusy(false))
+                }}
+              />
+              <span>Tell me about new messages and calls, even when Kinspirit is closed</span>
+            </label>
+          </>
+        )}
+      </div>
+
+      <div className="settings-card">
+        <h2 className="section-title flush">Data saver</h2>
+        <label className="switch-row">
+          <input type="checkbox" checked={saver} onChange={(e) => setDataSaver(e.target.checked)} />
+          <span>Use less data</span>
+        </label>
+        <p className="muted">
+          Nothing downloads by itself (tap to get photos, videos, files and audio), photos you send are made smaller, voice notes use less data,
+          and chats refresh a little slower. Calls and message sending work as normal.
+        </p>
+      </div>
+
+      <div className="settings-card">
+        <h2 className="section-title flush">Blocked people</h2>
+        {blocked.length === 0 ? (
+          <p className="muted">You have not blocked anyone.</p>
+        ) : (
+          <ul className="blocked-list">
+            {blocked.map((p) => (
+              <li key={p.id}>
+                <Avatar src={p.avatar_url} name={p.username} size={36} />
+                <span>@{p.username}</span>
+                <button type="button" className="link-btn" onClick={() => void unblockPerson(p.id).catch(() => undefined)}>
+                  Unblock
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       <div className="settings-card">

@@ -1,6 +1,12 @@
 -- Kinspirit database setup. Paste ALL of this into the Supabase dashboard:
 -- SQL Editor > New query > paste > Run. It is safe to run more than once,
 -- so run the whole file again whenever a new version of the app asks for it.
+--
+-- HOW THIS FILE IS BUILT: every table, column, constraint and function is defined ONCE, in its
+-- final form, in dependency order. Older versions of this file defined some of them several
+-- times (for example "messages_kind_check" was first created with a short list and widened
+-- later). On a database that already held image / video / file messages, the first, shorter
+-- version failed on the existing rows. That cannot happen any more.
 
 -- 1. Profiles: one row per person -------------------------------------------
 create table if not exists public.profiles (
@@ -11,6 +17,8 @@ create table if not exists public.profiles (
   avatar_url     text,
   created_at     timestamptz not null default now()
 );
+-- Can people who have my phone number find me? (switch in Settings)
+alter table public.profiles add column if not exists discoverable boolean not null default true;
 
 alter table public.profiles enable row level security;
 
@@ -52,9 +60,6 @@ as $$
      and not exists (select 1 from public.profiles where username = lower(u));
 $$;
 
-revoke all on function public.username_available(text) from public;
-grant execute on function public.username_available(text) to authenticated;
-
 -- 3. Profile photos ----------------------------------------------------------
 insert into storage.buckets (id, name, public)
 values ('avatars', 'avatars', true)
@@ -74,7 +79,7 @@ create policy "users replace their own avatar"
   on storage.objects for update to authenticated
   using (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
 
--- 4. Contacts, conversations and messages --------------------------------------
+-- 4. Tables ---------------------------------------------------------------------
 create table if not exists public.contacts (
   owner      uuid not null references public.profiles (id) on delete cascade,
   contact_id uuid not null references public.profiles (id) on delete cascade,
@@ -110,26 +115,131 @@ create table if not exists public.messages (
   body            text not null check (char_length(body) between 1 and 4000),
   created_at      timestamptz not null default now()
 );
--- audio file columns (used by the chat list below)
-alter table public.messages add column if not exists kind text not null default 'text';
-alter table public.messages add column if not exists file_path text;
-alter table public.messages add column if not exists file_name text;
-alter table public.messages add column if not exists file_size integer;
-alter table public.messages add column if not exists duration integer;
+
+-- Every message column, added once (safe on both new and existing databases).
+alter table public.messages add column if not exists kind             text not null default 'text';
+alter table public.messages add column if not exists file_path        text;
+alter table public.messages add column if not exists file_name        text;
+alter table public.messages add column if not exists file_size        integer;
+alter table public.messages add column if not exists duration         integer;
+alter table public.messages add column if not exists file_type        text;  -- original format, e.g. application/pdf
+alter table public.messages add column if not exists media_w          integer;
+alter table public.messages add column if not exists media_h          integer;
+alter table public.messages add column if not exists reply_to         uuid references public.messages (id) on delete set null;
+alter table public.messages add column if not exists edited_at        timestamptz;
+alter table public.messages add column if not exists deleted_at       timestamptz;
+alter table public.messages add column if not exists updated_at       timestamptz not null default now();
+alter table public.messages add column if not exists call_status      text
+  check (call_status in ('ringing', 'answered', 'declined', 'missed', 'ended', 'cancelled'));
+alter table public.messages add column if not exists call_ringing_at  timestamptz; -- the other phone has been reached
+alter table public.messages add column if not exists call_answered_at timestamptz;
+alter table public.messages add column if not exists call_ended_at    timestamptz;
+alter table public.messages add column if not exists file_removed_at  timestamptz; -- server copy cleaned up (see cleanup-files)
+
+-- Message rules, defined ONCE in their final form.
+-- "not valid" means old rows are not re-checked (so an older row can never block this script),
+-- while every NEW or EDITED message is still checked.
+alter table public.messages drop constraint if exists messages_kind_check;
+alter table public.messages add constraint messages_kind_check
+  check (kind in ('text', 'audio', 'voice', 'call', 'image', 'video', 'file', 'sticker')) not valid;
+
+alter table public.messages drop constraint if exists messages_audio_check;
+alter table public.messages add constraint messages_audio_check
+  check (kind in ('text', 'call', 'sticker') or file_removed_at is not null
+         or (file_path is not null and file_path like conversation_id::text || '/%')) not valid;
 
 create index if not exists messages_conversation_idx on public.messages (conversation_id, created_at desc);
+create index if not exists messages_updated_idx on public.messages (conversation_id, updated_at);
+create index if not exists messages_expiring_idx on public.messages (created_at) where file_path is not null;
+create index if not exists messages_ringing_idx on public.messages (created_at) where call_status = 'ringing';
 
-alter table public.contacts enable row level security;
-alter table public.conversations enable row level security;
+-- Audio files: remember who has saved a file, so the server copy is removed only after everyone has it.
+create table if not exists public.message_downloads (
+  message_id uuid not null references public.messages (id) on delete cascade,
+  user_id    uuid not null references public.profiles (id) on delete cascade,
+  primary key (message_id, user_id)
+);
+
+-- Block and report.
+create table if not exists public.blocks (
+  blocker    uuid not null references public.profiles (id) on delete cascade,
+  blocked    uuid not null references public.profiles (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (blocker, blocked)
+);
+
+create table if not exists public.reports (
+  id              uuid primary key default gen_random_uuid(),
+  reporter        uuid not null references public.profiles (id) on delete cascade,
+  reported        uuid not null references public.profiles (id) on delete cascade,
+  conversation_id uuid,
+  message_id      uuid,
+  reason          text not null,
+  created_at      timestamptz not null default now()
+);
+-- Reports are read by you in the Supabase Table Editor (reports table).
+
+-- Push notifications: one row per phone/browser that wants pings.
+create table if not exists public.push_subscriptions (
+  endpoint   text primary key,
+  user_id    uuid not null references public.profiles (id) on delete cascade,
+  p256dh     text not null,
+  auth       text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists push_subscriptions_user_idx on public.push_subscriptions (user_id);
+
+-- Where the server should send "new message" pings (filled in once, see the setup steps).
+create table if not exists public.push_config (
+  id     integer primary key default 1 check (id = 1),
+  url    text,
+  secret text
+);
+alter table public.push_config add column if not exists cleanup_url text;
+
+-- Reactions: one per person per message.
+create table if not exists public.message_reactions (
+  message_id uuid not null references public.messages (id) on delete cascade,
+  user_id    uuid not null references public.profiles (id) on delete cascade,
+  emoji      text not null check (char_length(emoji) between 1 and 16),
+  created_at timestamptz not null default now(),
+  primary key (message_id, user_id)
+);
+
+-- Contact sync: how many numbers each person has looked up today (a limit against scraping).
+create table if not exists public.phone_lookups (
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  at      timestamptz not null default now(),
+  n       integer not null
+);
+create index if not exists phone_lookups_user_idx on public.phone_lookups (user_id, at);
+
+alter table public.contacts             enable row level security;
+alter table public.conversations        enable row level security;
 alter table public.conversation_members enable row level security;
-alter table public.messages enable row level security;
+alter table public.messages             enable row level security;
+alter table public.message_downloads    enable row level security;
+alter table public.blocks               enable row level security;
+alter table public.reports              enable row level security;
+alter table public.push_subscriptions   enable row level security;
+alter table public.push_config          enable row level security;
+alter table public.message_reactions    enable row level security;
+alter table public.phone_lookups        enable row level security;
 
--- The app reaches contacts, conversations and members only through the functions below.
-revoke all on public.contacts from anon, authenticated;
-revoke all on public.conversations from anon, authenticated;
+-- The app reaches these tables only through the functions below (messages: read + send, see section 6).
+revoke all on public.contacts             from anon, authenticated;
+revoke all on public.conversations        from anon, authenticated;
 revoke all on public.conversation_members from anon, authenticated;
-revoke all on public.messages from anon, authenticated;
+revoke all on public.messages             from anon, authenticated;
+revoke all on public.message_downloads    from anon, authenticated;
+revoke all on public.blocks               from anon, authenticated;
+revoke all on public.reports              from anon, authenticated;
+revoke all on public.push_subscriptions   from anon, authenticated;
+revoke all on public.push_config          from anon, authenticated;
+revoke all on public.message_reactions    from anon, authenticated;
+revoke all on public.phone_lookups        from anon, authenticated;
 
+-- 5. Helper checks -------------------------------------------------------------
 -- Am I a member of this conversation?
 create or replace function public.is_member(cid uuid)
 returns boolean
@@ -143,12 +253,20 @@ as $$
     where m.conversation_id = cid and m.user_id = auth.uid()
   );
 $$;
-revoke all on function public.is_member(uuid) from public;
-grant execute on function public.is_member(uuid) to authenticated;
 
--- Messages: members can read, and can send as themselves.
+-- Has either person blocked the other? (internal only)
+create or replace function public.is_blocked_between(a uuid, b uuid)
+returns boolean language sql security definer set search_path = public stable as $$
+  select exists (select 1 from public.blocks
+    where (blocker = a and blocked = b) or (blocker = b and blocked = a));
+$$;
+
+-- 6. Messages: access, triggers ---------------------------------------------------
+-- Members can read, and can send as themselves.
 grant select on public.messages to authenticated;
-grant insert (id, conversation_id, sender_id, body) on public.messages to authenticated;
+grant insert (id, conversation_id, sender_id, body, kind, file_path, file_name, file_size,
+              duration, reply_to, file_type, media_w, media_h)
+  on public.messages to authenticated;
 
 drop policy if exists "members read messages" on public.messages;
 create policy "members read messages"
@@ -177,6 +295,58 @@ create trigger messages_touch_conversation
   after insert on public.messages
   for each row execute function public.touch_conversation();
 
+-- A blocked sender is not told; the message just never reaches the other person.
+-- Spam guard: no more than 40 messages in 30 seconds.
+create or replace function public.messages_guard()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare other uuid; c text;
+begin
+  if (select count(*) from public.messages where sender_id = new.sender_id
+        and created_at > now() - interval '30 seconds') >= 40 then
+    raise exception 'slow down';
+  end if;
+  select kind into c from public.conversations where id = new.conversation_id;
+  if c = 'direct' then
+    select user_id into other from public.conversation_members
+     where conversation_id = new.conversation_id and user_id <> new.sender_id limit 1;
+    if other is not null then
+      if exists (select 1 from public.blocks where blocker = new.sender_id and blocked = other) then
+        raise exception 'you blocked this person';
+      end if;
+      if exists (select 1 from public.blocks where blocker = other and blocked = new.sender_id) then
+        return null; -- silently dropped
+      end if;
+    end if;
+  end if;
+  return new;
+end; $$;
+drop trigger if exists messages_guard_trg on public.messages;
+create trigger messages_guard_trg before insert on public.messages
+  for each row execute function public.messages_guard();
+
+-- 7. Files in chats (audio, photos, videos, documents) ----------------------------
+-- Files wait on the server only until the receiver saves them on their device. Up to 50 MB.
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('chat-files', 'chat-files', false, 52428800)
+on conflict (id) do update set file_size_limit = 52428800, public = false;
+
+drop policy if exists "members read chat files" on storage.objects;
+create policy "members read chat files" on storage.objects for select to authenticated
+  using (bucket_id = 'chat-files' and public.is_member(((storage.foldername(name))[1])::uuid));
+
+drop policy if exists "members add chat files" on storage.objects;
+create policy "members add chat files" on storage.objects for insert to authenticated
+  with check (bucket_id = 'chat-files' and public.is_member(((storage.foldername(name))[1])::uuid));
+
+drop policy if exists "members update chat files" on storage.objects;
+create policy "members update chat files" on storage.objects for update to authenticated
+  using (bucket_id = 'chat-files' and public.is_member(((storage.foldername(name))[1])::uuid));
+
+drop policy if exists "members remove chat files" on storage.objects;
+create policy "members remove chat files" on storage.objects for delete to authenticated
+  using (bucket_id = 'chat-files' and public.is_member(((storage.foldername(name))[1])::uuid));
+
+-- 8. People, contacts and one-to-one chats -----------------------------------------
 -- Find people by the start of a username (at least 2 letters).
 create or replace function public.search_profiles(q text)
 returns table (id uuid, username text, avatar_url text)
@@ -230,12 +400,9 @@ as $$
 $$;
 
 -- Open (or create) the one-to-one chat with another person.
+-- Not with someone who blocked you / whom you blocked, and no more than 30 new chats a day.
 create or replace function public.start_direct_chat(other uuid)
-returns uuid
-language plpgsql
-security definer
-set search_path = public
-as $$
+returns uuid language plpgsql security definer set search_path = public as $$
 declare
   me  uuid := auth.uid();
   k   text;
@@ -248,6 +415,11 @@ begin
   k := least(me::text, other::text) || ':' || greatest(me::text, other::text);
   select id into cid from public.conversations where direct_key = k;
   if cid is null then
+    if public.is_blocked_between(me, other) then raise exception 'cannot message this person'; end if;
+    if (select count(*) from public.conversations where created_by = me and kind = 'direct'
+          and created_at > now() - interval '1 day') >= 30 then
+      raise exception 'slow down';
+    end if;
     insert into public.conversations (kind, created_by, direct_key)
     values ('direct', me, k)
     on conflict (direct_key) do nothing
@@ -264,8 +436,10 @@ begin
 end;
 $$;
 
--- My chat list: newest first, with the last message and how many are unread.
+-- 9. Chat list ----------------------------------------------------------------------
+-- Newest first, with the last message and how many are unread.
 -- Groups appear as soon as they are created, even before the first message.
+-- Deleted messages show as "Message deleted", missed calls as such, files with an icon.
 drop function if exists public.my_conversations();
 create or replace function public.my_conversations()
 returns table (
@@ -282,13 +456,24 @@ as $$
          o.user_id, p.username, p.avatar_url,
          coalesce(lm.body, 'Group created'), lm.sender_id, lp.username,
          (select count(*)::integer from public.messages m
-           where m.conversation_id = c.id and m.sender_id <> auth.uid() and m.created_at > me.last_read_at)
+           where m.conversation_id = c.id and m.sender_id <> auth.uid() and m.deleted_at is null
+             and coalesce(m.call_status, '') <> 'cancelled' and m.created_at > me.last_read_at)
   from public.conversation_members me
   join public.conversations c on c.id = me.conversation_id
   left join lateral (
-    select case when m.kind = 'audio' then '🎵 ' || m.body when m.kind = 'voice' then '🎤 Voice note' when m.kind = 'call' then '📞 Call' else m.body end as body, m.sender_id
+    select case when m.deleted_at is not null then '🚫 Message deleted'
+                when m.kind = 'audio' then '🎵 ' || m.body
+                when m.kind = 'voice' then '🎤 Voice note'
+                when m.kind = 'sticker' then '🙂 Sticker'
+                when m.kind = 'image' then '📷 Photo'
+                when m.kind = 'video' then '🎥 Video'
+                when m.kind = 'file'  then '📄 ' || coalesce(m.file_name, 'File')
+                when m.kind = 'call' and m.call_status in ('missed', 'ringing') and m.sender_id <> auth.uid() then '📞 Missed call'
+                when m.kind = 'call' then '📞 Call'
+                else m.body end as body, m.sender_id
     from public.messages m
-    where m.conversation_id = c.id order by m.created_at desc limit 1
+    where m.conversation_id = c.id and coalesce(m.call_status, '') <> 'cancelled'
+    order by m.created_at desc limit 1
   ) lm on true
   left join lateral (
     select x.user_id from public.conversation_members x
@@ -310,53 +495,8 @@ as $$
   where conversation_id = cid and user_id = auth.uid();
 $$;
 
-do $$
-declare f text;
-begin
-  foreach f in array array[
-    'search_profiles(text)', 'my_contacts()', 'add_contact(uuid)', 'remove_contact(uuid)',
-    'start_direct_chat(uuid)', 'my_conversations()', 'mark_read(uuid)'
-  ] loop
-    execute format('revoke all on function public.%s from public', f);
-    execute format('grant execute on function public.%s to authenticated', f);
-  end loop;
-end $$;
-
--- 5. Audio files in chats -----------------------------------------------------
--- Audio files wait on the server only until the receiver saves them on their device.
-
-alter table public.messages drop constraint if exists messages_kind_check;
-alter table public.messages add constraint messages_kind_check check (kind in ('text', 'audio', 'voice', 'call'));
-alter table public.messages drop constraint if exists messages_audio_check;
-alter table public.messages add constraint messages_audio_check
-  check (kind = 'text' or (file_path is not null and file_path like conversation_id::text || '/%'));
-
-grant insert (id, conversation_id, sender_id, body, kind, file_path, file_name, file_size, duration)
-  on public.messages to authenticated;
-
-insert into storage.buckets (id, name, public, file_size_limit)
-values ('chat-files', 'chat-files', false, 20971520)
-on conflict (id) do update set file_size_limit = 20971520, public = false;
-
-drop policy if exists "members read chat files" on storage.objects;
-create policy "members read chat files" on storage.objects for select to authenticated
-  using (bucket_id = 'chat-files' and public.is_member(((storage.foldername(name))[1])::uuid));
-
-drop policy if exists "members add chat files" on storage.objects;
-create policy "members add chat files" on storage.objects for insert to authenticated
-  with check (bucket_id = 'chat-files' and public.is_member(((storage.foldername(name))[1])::uuid));
-
-drop policy if exists "members update chat files" on storage.objects;
-create policy "members update chat files" on storage.objects for update to authenticated
-  using (bucket_id = 'chat-files' and public.is_member(((storage.foldername(name))[1])::uuid));
-
-drop policy if exists "members remove chat files" on storage.objects;
-create policy "members remove chat files" on storage.objects for delete to authenticated
-  using (bucket_id = 'chat-files' and public.is_member(((storage.foldername(name))[1])::uuid));
-
--- 6. Groups -------------------------------------------------------------------
+-- 10. Groups -----------------------------------------------------------------------
 -- Up to 2000 people. Any member can add friends; admins can remove people, rename and promote.
-
 create or replace function public.create_group(group_title text, member_ids uuid[])
 returns uuid
 language plpgsql
@@ -495,15 +635,8 @@ begin
 end;
 $$;
 
--- Audio files: remember who has saved a file, so the server copy is removed only after everyone has it.
-create table if not exists public.message_downloads (
-  message_id uuid not null references public.messages (id) on delete cascade,
-  user_id    uuid not null references public.profiles (id) on delete cascade,
-  primary key (message_id, user_id)
-);
-alter table public.message_downloads enable row level security;
-revoke all on public.message_downloads from anon, authenticated;
-
+-- 11. Saved audio files ---------------------------------------------------------------
+-- Returns true once everyone else in the chat has saved the file, so the server copy can be removed.
 create or replace function public.audio_saved(mid uuid)
 returns boolean
 language plpgsql
@@ -523,20 +656,7 @@ begin
 end;
 $$;
 
-do $$
-declare f text;
-begin
-  foreach f in array array[
-    'my_conversations()', 'create_group(text, uuid[])', 'group_members(uuid)', 'add_group_members(uuid, uuid[])',
-    'remove_group_member(uuid, uuid)', 'set_group_admin(uuid, uuid, boolean)', 'rename_group(uuid, text)',
-    'leave_group(uuid)', 'audio_saved(uuid)'
-  ] loop
-    execute format('revoke all on function public.%s from public', f);
-    execute format('grant execute on function public.%s to authenticated', f);
-  end loop;
-end $$;
-
--- 7. Calls --------------------------------------------------------------------
+-- 12. Calls ---------------------------------------------------------------------------
 -- Used by the "livekit-token" Edge Function: am I in this chat, and am I a host?
 -- Hosts are group admins. In one-to-one chats both people are equal.
 create or replace function public.call_info(cid uuid)
@@ -552,136 +672,25 @@ as $$
   join public.profiles p on p.id = m.user_id
   where m.conversation_id = cid and m.user_id = auth.uid();
 $$;
-revoke all on function public.call_info(uuid) from public;
-grant execute on function public.call_info(uuid) to authenticated;
 
--- 8. Reply, edit and delete ---------------------------------------------------
--- updated_at moves forward on every edit or delete, so the app's polling sees changes.
-alter table public.messages add column if not exists reply_to   uuid references public.messages (id) on delete set null;
-alter table public.messages add column if not exists edited_at  timestamptz;
-alter table public.messages add column if not exists deleted_at timestamptz;
-alter table public.messages add column if not exists updated_at timestamptz not null default now();
-create index if not exists messages_updated_idx on public.messages (conversation_id, updated_at);
-
-grant insert (id, conversation_id, sender_id, body, kind, file_path, file_name, file_size, duration, reply_to)
-  on public.messages to authenticated;
-
--- Edit my own text message.
-create or replace function public.edit_message(mid uuid, new_body text)
-returns void
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare n integer;
-begin
-  if auth.uid() is null then raise exception 'not signed in'; end if;
-  new_body := btrim(coalesce(new_body, ''));
-  if char_length(new_body) not between 1 and 4000 then raise exception 'empty message'; end if;
-  update public.messages
-     set body = new_body, edited_at = now(), updated_at = now()
-   where id = mid and sender_id = auth.uid() and kind = 'text' and deleted_at is null
-     and public.is_member(conversation_id);
-  get diagnostics n = row_count;
-  if n = 0 then raise exception 'cannot edit this message'; end if;
-end;
-$$;
-
--- Delete for everyone: the sender can delete their own; in a group, admins can delete anyone's.
--- Returns the file path (if any) so the app can remove the file from storage.
-create or replace function public.delete_message(mid uuid)
-returns text
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare m public.messages%rowtype; allowed boolean;
-begin
-  if auth.uid() is null then raise exception 'not signed in'; end if;
-  select * into m from public.messages where id = mid;
-  if not found or not public.is_member(m.conversation_id) then raise exception 'message not found'; end if;
-  allowed := m.sender_id = auth.uid() or exists (
-    select 1 from public.conversation_members cm join public.conversations c on c.id = cm.conversation_id
-    where cm.conversation_id = m.conversation_id and cm.user_id = auth.uid() and cm.role = 'admin' and c.kind = 'group'
-  );
-  if not allowed then raise exception 'not allowed'; end if;
-  if m.deleted_at is not null then return null; end if;
-  update public.messages set deleted_at = now(), updated_at = now() where id = mid;
-  return m.file_path;
-end;
-$$;
-
--- Chat list: deleted messages show as "Message deleted".
-drop function if exists public.my_conversations();
-create or replace function public.my_conversations()
-returns table (
-  id uuid, kind text, title text, last_message_at timestamptz,
-  other_id uuid, other_username text, other_avatar text,
-  last_body text, last_sender uuid, last_sender_name text, unread integer
-)
-language sql
-security definer
-set search_path = public
-stable
-as $$
-  select c.id, c.kind, c.title, c.last_message_at,
-         o.user_id, p.username, p.avatar_url,
-         coalesce(lm.body, 'Group created'), lm.sender_id, lp.username,
-         (select count(*)::integer from public.messages m
-           where m.conversation_id = c.id and m.sender_id <> auth.uid() and m.deleted_at is null and m.created_at > me.last_read_at)
-  from public.conversation_members me
-  join public.conversations c on c.id = me.conversation_id
-  left join lateral (
-    select case when m.deleted_at is not null then '🚫 Message deleted'
-                when m.kind = 'audio' then '🎵 ' || m.body when m.kind = 'voice' then '🎤 Voice note'
-                when m.kind = 'call' then '📞 Call' else m.body end as body, m.sender_id
-    from public.messages m
-    where m.conversation_id = c.id order by m.created_at desc limit 1
-  ) lm on true
-  left join lateral (
-    select x.user_id from public.conversation_members x
-    where x.conversation_id = c.id and x.user_id <> auth.uid() and c.kind = 'direct' limit 1
-  ) o on true
-  left join public.profiles p on p.id = o.user_id
-  left join public.profiles lp on lp.id = lm.sender_id
-  where me.user_id = auth.uid() and (lm.sender_id is not null or c.kind = 'group')
-  order by c.last_message_at desc;
-$$;
-
-do $$
-declare f text;
-begin
-  foreach f in array array['my_conversations()', 'edit_message(uuid, text)', 'delete_message(uuid)'] loop
-    execute format('revoke all on function public.%s from public', f);
-    execute format('grant execute on function public.%s to authenticated', f);
-  end loop;
-end $$;
-
--- 9. Ringing: calling, ringing, answered, missed -------------------------------
 -- A call is a chat message (kind 'call') that carries its own status.
-alter table public.messages add column if not exists call_status      text
-  check (call_status in ('ringing', 'answered', 'declined', 'missed', 'ended', 'cancelled'));
-alter table public.messages add column if not exists call_ringing_at  timestamptz; -- the other phone has been reached
-alter table public.messages add column if not exists call_answered_at timestamptz;
-alter table public.messages add column if not exists call_ended_at    timestamptz;
-create index if not exists messages_ringing_idx on public.messages (created_at) where call_status = 'ringing';
-
--- Call messages have no file, so the earlier "audio" rule must allow them.
-alter table public.messages drop constraint if exists messages_audio_check;
-alter table public.messages add constraint messages_audio_check
-  check (kind in ('text', 'call') or (file_path is not null and file_path like conversation_id::text || '/%'));
-
 -- Start ringing. If this chat is already ringing, returns that call (mine = false means someone else rang first).
+-- Refused quietly when blocked either way.
 create or replace function public.start_call(cid uuid)
 returns table (id uuid, mine boolean)
-language plpgsql
-security definer
-set search_path = public
-as $$
+language plpgsql security definer set search_path = public as $$
 #variable_conflict use_column
-declare me uuid := auth.uid(); mid uuid; snd uuid;
+declare me uuid := auth.uid(); mid uuid; snd uuid; other uuid; c text;
 begin
   if me is null or not public.is_member(cid) then raise exception 'not allowed'; end if;
+  select kind into c from public.conversations where conversations.id = cid;
+  if c = 'direct' then
+    select user_id into other from public.conversation_members
+     where conversation_id = cid and user_id <> me limit 1;
+    if other is not null and public.is_blocked_between(me, other) then
+      raise exception 'cannot call this person right now';
+    end if;
+  end if;
   select m.id, m.sender_id into mid, snd from public.messages m
    where m.conversation_id = cid and m.kind = 'call' and m.call_status = 'ringing'
      and m.created_at > now() - interval '45 seconds'
@@ -775,111 +784,249 @@ as $$
           or (m.sender_id = auth.uid() and m.call_status = 'ringing'));
 $$;
 
--- Chat list: show missed calls as such.
-drop function if exists public.my_conversations();
-create or replace function public.my_conversations()
-returns table (
-  id uuid, kind text, title text, last_message_at timestamptz,
-  other_id uuid, other_username text, other_avatar text,
-  last_body text, last_sender uuid, last_sender_name text, unread integer
-)
-language sql
+-- 13. Reply, edit and delete ------------------------------------------------------------
+-- updated_at moves forward on every edit or delete, so the app's polling sees changes.
+
+-- Edit my own text message.
+create or replace function public.edit_message(mid uuid, new_body text)
+returns void
+language plpgsql
 security definer
 set search_path = public
-stable
 as $$
-  select c.id, c.kind, c.title, c.last_message_at,
-         o.user_id, p.username, p.avatar_url,
-         coalesce(lm.body, 'Group created'), lm.sender_id, lp.username,
-         (select count(*)::integer from public.messages m
-           where m.conversation_id = c.id and m.sender_id <> auth.uid() and m.deleted_at is null
-             and coalesce(m.call_status, '') <> 'cancelled' and m.created_at > me.last_read_at)
-  from public.conversation_members me
-  join public.conversations c on c.id = me.conversation_id
-  left join lateral (
-    select case when m.deleted_at is not null then '🚫 Message deleted'
-                when m.kind = 'audio' then '🎵 ' || m.body when m.kind = 'voice' then '🎤 Voice note'
-                when m.kind = 'call' and m.call_status in ('missed', 'ringing') and m.sender_id <> auth.uid() then '📞 Missed call'
-                when m.kind = 'call' then '📞 Call' else m.body end as body, m.sender_id
-    from public.messages m
-    where m.conversation_id = c.id and coalesce(m.call_status, '') <> 'cancelled'
-    order by m.created_at desc limit 1
-  ) lm on true
-  left join lateral (
-    select x.user_id from public.conversation_members x
-    where x.conversation_id = c.id and x.user_id <> auth.uid() and c.kind = 'direct' limit 1
-  ) o on true
-  left join public.profiles p on p.id = o.user_id
-  left join public.profiles lp on lp.id = lm.sender_id
-  where me.user_id = auth.uid() and (lm.sender_id is not null or c.kind = 'group')
-  order by c.last_message_at desc;
+declare n integer;
+begin
+  if auth.uid() is null then raise exception 'not signed in'; end if;
+  new_body := btrim(coalesce(new_body, ''));
+  if char_length(new_body) not between 1 and 4000 then raise exception 'empty message'; end if;
+  update public.messages
+     set body = new_body, edited_at = now(), updated_at = now()
+   where id = mid and sender_id = auth.uid() and kind = 'text' and deleted_at is null
+     and public.is_member(conversation_id);
+  get diagnostics n = row_count;
+  if n = 0 then raise exception 'cannot edit this message'; end if;
+end;
 $$;
 
+-- Delete for everyone: the sender can delete their own; in a group, admins can delete anyone's.
+-- Returns the file path (if any) so the app can remove the file from storage.
+create or replace function public.delete_message(mid uuid)
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare m public.messages%rowtype; allowed boolean;
+begin
+  if auth.uid() is null then raise exception 'not signed in'; end if;
+  select * into m from public.messages where id = mid;
+  if not found or not public.is_member(m.conversation_id) then raise exception 'message not found'; end if;
+  allowed := m.sender_id = auth.uid() or exists (
+    select 1 from public.conversation_members cm join public.conversations c on c.id = cm.conversation_id
+    where cm.conversation_id = m.conversation_id and cm.user_id = auth.uid() and cm.role = 'admin' and c.kind = 'group'
+  );
+  if not allowed then raise exception 'not allowed'; end if;
+  if m.deleted_at is not null then return null; end if;
+  update public.messages set deleted_at = now(), updated_at = now() where id = mid;
+  return m.file_path;
+end;
+$$;
+
+-- 14. Block and report ----------------------------------------------------------------------
+create or replace function public.block_user(who uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null or who is null or who = auth.uid() then raise exception 'invalid person'; end if;
+  insert into public.blocks (blocker, blocked) values (auth.uid(), who) on conflict do nothing;
+end; $$;
+
+create or replace function public.unblock_user(who uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  delete from public.blocks where blocker = auth.uid() and blocked = who;
+end; $$;
+
+create or replace function public.my_blocks()
+returns table (id uuid, username text, avatar_url text)
+language sql security definer set search_path = public stable as $$
+  select p.id, p.username, p.avatar_url
+  from public.blocks b join public.profiles p on p.id = b.blocked
+  where b.blocker = auth.uid() order by b.created_at desc;
+$$;
+
+create or replace function public.report_user(who uuid, reason text, mid uuid default null, cid uuid default null)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null or who is null or who = auth.uid() then raise exception 'invalid person'; end if;
+  if (select count(*) from public.reports where reporter = auth.uid() and created_at > now() - interval '1 day') >= 20 then
+    raise exception 'too many reports today';
+  end if;
+  insert into public.reports (reporter, reported, conversation_id, message_id, reason)
+  values (auth.uid(), who, cid, mid, left(coalesce(reason, 'Other'), 300));
+end; $$;
+
+-- 15. Push notifications ----------------------------------------------------------------------
+create extension if not exists pg_net with schema extensions;
+
+-- The parameter names (endpoint, p256dh, auth) match what the app sends, so they stay as they are.
+-- "use_column" tells Postgres that a bare name inside the SQL means the table column, which keeps
+-- "on conflict (endpoint)" unambiguous even though a parameter has the same name.
+create or replace function public.save_push_subscription(endpoint text, p256dh text, auth text)
+returns void language plpgsql security definer set search_path = public as $$
+#variable_conflict use_column
+begin
+  if auth.uid() is null then raise exception 'not signed in'; end if;
+  insert into public.push_subscriptions (endpoint, user_id, p256dh, auth)
+  values (save_push_subscription.endpoint, auth.uid(),
+          save_push_subscription.p256dh, save_push_subscription.auth)
+  on conflict (endpoint) do update
+    set user_id = auth.uid(), p256dh = excluded.p256dh, auth = excluded.auth;
+end; $$;
+
+create or replace function public.remove_push_subscription(endpoint text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  delete from public.push_subscriptions p
+   where p.endpoint = remove_push_subscription.endpoint and p.user_id = auth.uid();
+end; $$;
+
+-- Every new message (or ringing call) pings the send-push function. A failure here never blocks sending.
+create or replace function public.notify_push()
+returns trigger language plpgsql security definer set search_path = public, extensions as $$
+declare cfg record;
+begin
+  if new.kind = 'call' and coalesce(new.call_status, '') <> 'ringing' then return new; end if;
+  -- No pings for the general group (too many people).
+  if exists (select 1 from public.conversations where id = new.conversation_id and direct_key = 'general') then return new; end if;
+  select url, secret into cfg from public.push_config where id = 1;
+  if cfg.url is null or cfg.secret is null then return new; end if;
+  begin
+    perform net.http_post(
+      url := cfg.url,
+      headers := jsonb_build_object('Content-Type', 'application/json', 'x-push-secret', cfg.secret),
+      body := jsonb_build_object('message_id', new.id),
+      timeout_milliseconds := 3000
+    );
+  exception when others then null;
+  end;
+  return new;
+end; $$;
+drop trigger if exists messages_notify_push on public.messages;
+create trigger messages_notify_push after insert on public.messages
+  for each row execute function public.notify_push();
+
+-- To switch pings on, fill in the function address and secret ONCE (replace both values), then run:
+--   insert into public.push_config (id, url, secret)
+--   values (1, 'https://YOUR-PROJECT.supabase.co/functions/v1/send-push', 'YOUR-SECRET')
+--   on conflict (id) do update set url = excluded.url, secret = excluded.secret;
+
+-- 15b. Reactions, stickers and the general group ---------------------------------------------
+-- Same emoji again (or an empty one) removes my reaction.
+create or replace function public.react(mid uuid, new_emoji text)
+returns void language plpgsql security definer set search_path = public as $$
+declare cid uuid; old text;
+begin
+  select conversation_id into cid from public.messages where id = mid;
+  if cid is null or auth.uid() is null or not public.is_member(cid) then raise exception 'not allowed'; end if;
+  select emoji into old from public.message_reactions where message_id = mid and user_id = auth.uid();
+  if new_emoji is null or new_emoji = '' or new_emoji = old then
+    delete from public.message_reactions where message_id = mid and user_id = auth.uid();
+  else
+    insert into public.message_reactions (message_id, user_id, emoji) values (mid, auth.uid(), new_emoji)
+    on conflict (message_id, user_id) do update set emoji = excluded.emoji, created_at = now();
+  end if;
+end; $$;
+
+create or replace function public.conversation_reactions(cid uuid)
+returns table (message_id uuid, user_id uuid, emoji text)
+language sql security definer set search_path = public stable as $$
+  select r.message_id, r.user_id, r.emoji
+  from public.message_reactions r
+  where public.is_member(cid)
+    and r.message_id in (select m.id from public.messages m where m.conversation_id = cid order by m.created_at desc limit 200);
+$$;
+
+-- The general group: everyone can join and talk. Calling this puts the caller in it (creating it the first time).
+create or replace function public.join_general()
+returns uuid language plpgsql security definer set search_path = public as $$
+declare cid uuid;
+begin
+  if auth.uid() is null then raise exception 'not signed in'; end if;
+  select id into cid from public.conversations where direct_key = 'general';
+  if cid is null then
+    insert into public.conversations (kind, title, direct_key) values ('group', 'Kinspirit General', 'general')
+    on conflict (direct_key) do nothing returning id into cid;
+    if cid is null then select id into cid from public.conversations where direct_key = 'general'; end if;
+  end if;
+  insert into public.conversation_members (conversation_id, user_id) values (cid, auth.uid()) on conflict do nothing;
+  return cid;
+end; $$;
+
+-- Contact sync: which of these phone numbers (+2348031234567 form) belong to people on Kinspirit?
+-- Returns only username and photo, never a number. At most 500 per call and 3000 a day per person.
+create or replace function public.match_phones(nums text[])
+returns table (id uuid, username text, avatar_url text)
+language plpgsql security definer set search_path = public as $$
+#variable_conflict use_column
+declare used integer; cnt integer := coalesce(array_length(nums, 1), 0);
+begin
+  if auth.uid() is null then raise exception 'not signed in'; end if;
+  if cnt = 0 then return; end if;
+  if cnt > 500 then raise exception 'too many numbers at once'; end if;
+  select coalesce(sum(l.n), 0) into used from public.phone_lookups l
+   where l.user_id = auth.uid() and l.at > now() - interval '1 day';
+  if used + cnt > 3000 then raise exception 'slow down'; end if;
+  insert into public.phone_lookups (user_id, n) values (auth.uid(), cnt);
+  return query
+    select p.id, p.username, p.avatar_url
+    from public.profiles p
+    where p.phone = any (nums) and p.discoverable and p.id <> auth.uid()
+      and not public.is_blocked_between(auth.uid(), p.id)
+    order by p.username
+    limit 500;
+end; $$;
+
+create or replace function public.set_discoverable(on_off boolean)
+returns void language sql security definer set search_path = public as $$
+  update public.profiles set discoverable = on_off where id = auth.uid();
+$$;
+
+create or replace function public.my_discoverable()
+returns boolean language sql security definer set search_path = public stable as $$
+  select coalesce((select discoverable from public.profiles where id = auth.uid()), true);
+$$;
+
+-- To make yourself admin of the general group (can delete others' messages), run once with your username:
+--   update public.conversation_members set role = 'admin'
+--   where conversation_id = (select id from public.conversations where direct_key = 'general')
+--     and user_id = (select id from public.profiles where username = 'YOUR_USERNAME');
+
+-- 16. Function access (one place, for every function) -----------------------------------------
+-- Only signed-in users may run these.
 do $$
 declare f text;
 begin
   foreach f in array array[
-    'start_call(uuid)', 'incoming_calls()', 'answer_call(uuid)', 'decline_call(uuid)', 'end_call(uuid, boolean)', 'my_conversations()'
+    'username_available(text)', 'is_member(uuid)',
+    'search_profiles(text)', 'my_contacts()', 'add_contact(uuid)', 'remove_contact(uuid)',
+    'start_direct_chat(uuid)', 'my_conversations()', 'mark_read(uuid)',
+    'create_group(text, uuid[])', 'group_members(uuid)', 'add_group_members(uuid, uuid[])',
+    'remove_group_member(uuid, uuid)', 'set_group_admin(uuid, uuid, boolean)', 'rename_group(uuid, text)',
+    'leave_group(uuid)', 'audio_saved(uuid)', 'call_info(uuid)',
+    'start_call(uuid)', 'incoming_calls()', 'answer_call(uuid)', 'decline_call(uuid)', 'end_call(uuid, boolean)',
+    'edit_message(uuid, text)', 'delete_message(uuid)',
+    'block_user(uuid)', 'unblock_user(uuid)', 'my_blocks()', 'report_user(uuid, text, uuid, uuid)',
+    'save_push_subscription(text, text, text)', 'remove_push_subscription(text)',
+    'react(uuid, text)', 'conversation_reactions(uuid)', 'join_general()',
+    'match_phones(text[])', 'set_discoverable(boolean)', 'my_discoverable()'
   ] loop
     execute format('revoke all on function public.%s from public', f);
     execute format('grant execute on function public.%s to authenticated', f);
   end loop;
 end $$;
 
--- 10. Photos, videos and files of any kind --------------------------------------
-alter table public.messages drop constraint if exists messages_kind_check;
-alter table public.messages add constraint messages_kind_check
-  check (kind in ('text', 'audio', 'voice', 'call', 'image', 'video', 'file'));
-alter table public.messages add column if not exists file_type text;  -- the original format, e.g. application/pdf
-alter table public.messages add column if not exists media_w   integer;
-alter table public.messages add column if not exists media_h   integer;
-
-grant insert (id, conversation_id, sender_id, body, kind, file_path, file_name, file_size, duration, reply_to, file_type, media_w, media_h)
-  on public.messages to authenticated;
-
--- Files up to 50 MB (the free plan's own limit).
-update storage.buckets set file_size_limit = 52428800 where id = 'chat-files';
-
--- Chat list previews for the new kinds.
-drop function if exists public.my_conversations();
-create or replace function public.my_conversations()
-returns table (
-  id uuid, kind text, title text, last_message_at timestamptz,
-  other_id uuid, other_username text, other_avatar text,
-  last_body text, last_sender uuid, last_sender_name text, unread integer
-)
-language sql
-security definer
-set search_path = public
-stable
-as $$
-  select c.id, c.kind, c.title, c.last_message_at,
-         o.user_id, p.username, p.avatar_url,
-         coalesce(lm.body, 'Group created'), lm.sender_id, lp.username,
-         (select count(*)::integer from public.messages m
-           where m.conversation_id = c.id and m.sender_id <> auth.uid() and m.deleted_at is null
-             and coalesce(m.call_status, '') <> 'cancelled' and m.created_at > me.last_read_at)
-  from public.conversation_members me
-  join public.conversations c on c.id = me.conversation_id
-  left join lateral (
-    select case when m.deleted_at is not null then '🚫 Message deleted'
-                when m.kind = 'audio' then '🎵 ' || m.body when m.kind = 'voice' then '🎤 Voice note'
-                when m.kind = 'image' then '📷 Photo' when m.kind = 'video' then '🎥 Video'
-                when m.kind = 'file' then '📄 ' || coalesce(m.file_name, 'File')
-                when m.kind = 'call' and m.call_status in ('missed', 'ringing') and m.sender_id <> auth.uid() then '📞 Missed call'
-                when m.kind = 'call' then '📞 Call' else m.body end as body, m.sender_id
-    from public.messages m
-    where m.conversation_id = c.id and coalesce(m.call_status, '') <> 'cancelled'
-    order by m.created_at desc limit 1
-  ) lm on true
-  left join lateral (
-    select x.user_id from public.conversation_members x
-    where x.conversation_id = c.id and x.user_id <> auth.uid() and c.kind = 'direct' limit 1
-  ) o on true
-  left join public.profiles p on p.id = o.user_id
-  left join public.profiles lp on lp.id = lm.sender_id
-  where me.user_id = auth.uid() and (lm.sender_id is not null or c.kind = 'group')
-  order by c.last_message_at desc;
-$$;
-revoke all on function public.my_conversations() from public;
-grant execute on function public.my_conversations() to authenticated;
+-- Internal only: the app can never call these directly.
+revoke all on function public.is_blocked_between(uuid, uuid) from public, anon, authenticated;
+revoke all on function public.touch_conversation()           from public, anon, authenticated;
+revoke all on function public.messages_guard()               from public, anon, authenticated;
+revoke all on function public.notify_push()                  from public, anon, authenticated;

@@ -1,7 +1,8 @@
+import { dataSaver, POLL_FACTOR } from './dataSaver'
 import { useEffect, useRef } from 'react'
 
 /** Runs `fn` now and then every `ms` while the page is visible. Errors are left to `fn` to handle. */
-export function usePolling(fn: () => Promise<void> | void, ms: number, enabled = true) {
+export function usePolling(fn: () => Promise<void> | void, ms: number, enabled = true, fixed = false) {
   const latest = useRef(fn)
   useEffect(() => {
     latest.current = fn
@@ -24,7 +25,7 @@ export function usePolling(fn: () => Promise<void> | void, ms: number, enabled =
         }
       }
       running = false
-      if (!stopped) timer = window.setTimeout(() => void tick(), ms)
+      if (!stopped) timer = window.setTimeout(() => void tick(), fixed || !dataSaver() ? ms : ms * POLL_FACTOR)
     }
     const onVisible = () => {
       if (document.visibilityState === 'visible') {

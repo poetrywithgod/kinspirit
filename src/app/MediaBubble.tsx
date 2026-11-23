@@ -43,6 +43,7 @@ export function MediaBubble({
   const [err, setErr] = useState('')
   const [broken, setBroken] = useState(false)
   const name = m.file_name ?? m.body
+  const unavailable = !m.file_path && !have
   const type = m.file_type || 'application/octet-stream'
   const ratio = m.media_w && m.media_h ? `${m.media_w} / ${m.media_h}` : '4 / 3'
 
@@ -70,9 +71,9 @@ export function MediaBubble({
             <img src={url} alt={name} onError={() => setBroken(true)} />
           </button>
         ) : (
-          <button type="button" className="media-get" disabled={busy} onClick={() => void get()}>
+          <button type="button" className="media-get" disabled={busy || unavailable} onClick={() => void get()}>
             <DownloadIcon />
-            <span>{busy ? 'Downloading…' : (err || (m.file_size ? fmtSize(m.file_size) : 'Photo'))}</span>
+            <span>{busy ? 'Downloading…' : (err || (unavailable ? 'No longer available' : m.file_size ? fmtSize(m.file_size) : 'Photo'))}</span>
           </button>
         )}
       </span>
@@ -86,10 +87,10 @@ export function MediaBubble({
           {url ? (
             <video className="media-video" src={url} controls playsInline preload="metadata" />
           ) : (
-            <button type="button" className="media-get" disabled={busy} onClick={() => void get()}>
+            <button type="button" className="media-get" disabled={busy || unavailable} onClick={() => void get()}>
               {busy ? null : <PlayIcon />}
               <span>
-                {busy ? 'Downloading…' : err || `${m.file_size ? fmtSize(m.file_size) : 'Video'}${m.duration ? ` · ${fmtDur(m.duration)}` : ''}`}
+                {busy ? 'Downloading…' : err || (unavailable ? 'No longer available' : '') || `${m.file_size ? fmtSize(m.file_size) : 'Video'}${m.duration ? ` · ${fmtDur(m.duration)}` : ''}`}
               </span>
             </button>
           )}
@@ -115,7 +116,7 @@ export function MediaBubble({
       <button
         type="button"
         className="file-main"
-        disabled={busy}
+        disabled={busy || unavailable}
         onClick={() => (have ? (viewable(type) && url ? window.open(url, '_blank', 'noopener') : void save()) : void get())}
       >
         <span className="file-badge" aria-hidden="true">
@@ -125,7 +126,7 @@ export function MediaBubble({
           <span className="file-name">{name}</span>
           <span className="file-sub">
             {m.file_size ? fmtSize(m.file_size) : 'File'}
-            {!have && (busy ? ' · Downloading…' : ' · Tap to download')}
+            {!have && (busy ? ' · Downloading…' : unavailable ? ' · No longer available' : ' · Tap to download')}
             {have && ' · On your phone'}
           </span>
           {err && <span className="file-sub warn">{err}</span>}

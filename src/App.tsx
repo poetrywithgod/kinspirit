@@ -6,6 +6,7 @@ import { PatternLayer } from './PatternLayer'
 import { Profile } from './screens/Profile'
 import { VerifyEmail } from './screens/VerifyEmail'
 import { VerifyPhone } from './screens/VerifyPhone'
+import { COUNTRIES, flag, guessCountry, normalizePhone, type Country } from './phone'
 
 type Screen =
   | 'welcome'
@@ -18,16 +19,6 @@ type Screen =
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
 const MIN_PASSWORD = 8
-
-// Accepts 0803 123 4567, 803 123 4567 or +234 803 123 4567.
-// Returns the number in +234 form, or null when it is not a valid Nigerian mobile number.
-export function normalizeNigerianNumber(input: string): string | null {
-  let digits = input.replace(/[^\d+]/g, '')
-  if (digits.startsWith('+234')) digits = digits.slice(4)
-  else if (digits.startsWith('234')) digits = digits.slice(3)
-  else if (digits.startsWith('0')) digits = digits.slice(1)
-  return /^[789][01]\d{8}$/.test(digits) ? `+234${digits}` : null
-}
 
 function Welcome({
   notice,
@@ -160,7 +151,8 @@ function Signup({
   const [formError, setFormError] = useState('')
 
   const emailOk = EMAIL_RE.test(email.trim())
-  const normalized = normalizeNigerianNumber(phone)
+  const [country, setCountry] = useState<Country>(guessCountry)
+  const normalized = normalizePhone(country, phone)
   const passwordOk = password.length >= MIN_PASSWORD
 
   return (
@@ -197,9 +189,22 @@ function Signup({
         )}
 
         <div className="pill">
-          <span className="prefix" aria-hidden="true">
-            🇳🇬 +234
-          </span>
+          <label className="prefix cc">
+            <span aria-hidden="true">
+              {flag(country.iso)} +{country.dial} ▾
+            </span>
+            <select
+              aria-label="Country"
+              value={country.iso}
+              onChange={(e) => setCountry(COUNTRIES.find((c) => c.iso === e.target.value) ?? country)}
+            >
+              {COUNTRIES.map((c) => (
+                <option key={c.iso} value={c.iso}>
+                  {flag(c.iso)} {c.name} (+{c.dial})
+                </option>
+              ))}
+            </select>
+          </label>
           <input
             type="tel"
             inputMode="tel"
@@ -211,9 +216,9 @@ function Signup({
           />
         </div>
         {touched && normalized === null ? (
-          <p className="error">Enter a valid Nigerian mobile number.</p>
+          <p className="error">Enter a valid mobile number for {country.name}.</p>
         ) : (
-          <p className="hint">Friends find you on Kinspirit by this number.</p>
+          <p className="hint">Friends find you on Kinspirit by this number. Pick your country first.</p>
         )}
 
         <PasswordField

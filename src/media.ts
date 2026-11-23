@@ -1,3 +1,4 @@
+import { dataSaver } from './dataSaver'
 // Helpers for photos, videos and files: what kind something is, shrinking big photos, and file names and types.
 export type MediaKind = 'image' | 'video' | 'file'
 
@@ -66,11 +67,12 @@ export async function prepareImage(file: File): Promise<Prepared> {
   const type = typeOf(file)
   const bmp = await loadBitmap(file)
   const base: Prepared = { blob: file, name: file.name, type, width: bmp?.width, height: bmp?.height }
-  if (!bmp || type !== 'image/jpeg' || file.size < 1_200_000) {
+  const saver = dataSaver()
+  if (!bmp || type !== 'image/jpeg' || file.size < (saver ? 150_000 : 1_200_000)) {
     bmp?.close()
     return base
   }
-  const scale = Math.min(1, 1920 / Math.max(bmp.width, bmp.height))
+  const scale = Math.min(1, (saver ? 1280 : 1920) / Math.max(bmp.width, bmp.height))
   const w = Math.round(bmp.width * scale)
   const h = Math.round(bmp.height * scale)
   const canvas = document.createElement('canvas')
@@ -78,7 +80,7 @@ export async function prepareImage(file: File): Promise<Prepared> {
   canvas.height = h
   canvas.getContext('2d')?.drawImage(bmp, 0, 0, w, h)
   bmp.close()
-  const out = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.82))
+  const out = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', saver ? 0.7 : 0.82))
   if (!out || out.size >= file.size) return base
   return { blob: out, name: file.name, type: 'image/jpeg', width: w, height: h }
 }
@@ -105,4 +107,22 @@ export function probeVideo(file: Blob): Promise<{ width?: number; height?: numbe
     }
     v.src = url
   })
+}
+
+// What each picker offers. The audio list names formats one by one (no "audio/*"), because on Android
+// "audio/*" makes the phone offer the sound recorder instead of the files on the phone.
+export const AUDIO_ACCEPT =
+  '.mp3,.m4a,.aac,.ogg,.oga,.opus,.wav,.flac,.amr,.wma,.mka,.3gp,audio/mpeg,audio/mp4,audio/x-m4a,audio/aac,audio/ogg,audio/wav,audio/x-wav,audio/flac,audio/amr,audio/x-ms-wma,application/ogg'
+export const DOCUMENT_ACCEPT =
+  '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.rtf,.csv,.odt,.ods,.odp,.zip,.rar,.7z,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/csv,application/zip'
+
+/** Cloud files and some file managers hand over an empty or unreadable file; catch that before sending. */
+export async function readable(file: File): Promise<boolean> {
+  if (file.size === 0) return false
+  try {
+    await file.slice(0, 1).arrayBuffer()
+    return true
+  } catch {
+    return false
+  }
 }
