@@ -9,6 +9,7 @@ import { Avatar } from './Avatar'
 import { disablePush, enablePush, pushState, testPush, type PushState } from '../push'
 import { profileLink, shareProfile } from '../invite'
 import { setDataSaver, useDataSaver } from '../dataSaver'
+import { LABEL, recSupport, setRecFormat, useRecFormat, type RecFormat } from '../recfmt'
 import { refreshBlocks, unblockPerson, useBlocks } from '../blocks'
 
 const OPTIONS: { id: ThemePref; label: string }[] = [
@@ -64,6 +65,8 @@ export function SettingsTab({
   }
 
   const saver = useDataSaver()
+  const recFmt = useRecFormat()
+  const recOk = recSupport()
   const [shareMsg, setShareMsg] = useState('')
   const [disc, setDisc] = useState<boolean | null>(null)
   useEffect(() => {
@@ -267,6 +270,24 @@ export function SettingsTab({
           Nothing downloads by itself (tap to get photos, videos, files and audio), photos you send are made smaller, voice notes use less data,
           and chats refresh a little slower. Calls and message sending work as normal.
         </p>
+      </div>
+
+      <div className="settings-card">
+        <h2 className="section-title flush">Call recordings</h2>
+        <p className="muted">When you record a call as host, it is saved in your Audio tab in this format.</p>
+        {([
+          ['opus', 'Opus – smallest file (.webm). Plays in Chrome, VLC and most Android players.'],
+          ['aac', 'AAC – small and plays on iPhone and Android (.m4a).'],
+          ['mp3', 'MP3 – plays anywhere, best for sharing (.mp3, a bit bigger).'],
+        ] as [RecFormat, string][]).map(([f, text]) => (
+          <label key={f} className="switch-row">
+            <input type="radio" name="recfmt" checked={recFmt === f} disabled={!recOk[f]} onChange={() => setRecFormat(f)} />
+            <span>
+              <strong>{LABEL[f]}</strong> {recOk[f] ? text.slice(text.indexOf('–') + 2) : 'Not available on this phone.'}
+            </span>
+          </label>
+        ))}
+        <p className="muted">On a computer, the host can also tap Screen during a call to record the screen and the call together as a video saved to Downloads.</p>
       </div>
 
       <div className="settings-card">

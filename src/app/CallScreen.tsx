@@ -5,6 +5,7 @@ import {
   hostAction,
   leaveCall,
   showCall,
+  canRecordScreen,
   startRecording,
   stopRecording,
   toggleMic,
@@ -93,7 +94,7 @@ export function CallLayer() {
 
       {c.recording && (
         <p className="rec-banner" role="status">
-          <span className="rec-dot" aria-hidden="true" /> {c.recordingBy === 'You' ? 'You are recording this call' : `${c.recordingBy} is recording this call`}
+          <span className="rec-dot" aria-hidden="true" /> {c.recordingBy === 'You' ? c.recKind === 'screen' ? 'You are recording your screen and this call' : 'You are recording this call' : `${c.recordingBy} is recording this call`}
         </p>
       )}
       {c.notice && <p className="call-note">{c.notice}</p>}
@@ -136,10 +137,26 @@ export function CallLayer() {
               <LockIcon />
               <span>{c.locked ? 'Unlock' : 'Lock mics'}</span>
             </button>
-            <button type="button" className={`ctl${c.recording ? ' on' : ''}`} onClick={() => (c.recording ? stopRecording() : startRecording())}>
+            <button
+              type="button"
+              className={`ctl${c.recording && c.recKind !== 'screen' ? ' on' : ''}`}
+              disabled={c.recording && c.recKind === 'screen'}
+              onClick={() => void (c.recording ? stopRecording() : startRecording('audio'))}
+            >
               <RecordIcon />
-              <span>{c.recording ? 'Stop' : 'Record'}</span>
+              <span>{c.recording && c.recKind !== 'screen' ? 'Stop' : 'Record'}</span>
             </button>
+            {canRecordScreen() && (
+              <button
+                type="button"
+                className={`ctl${c.recording && c.recKind === 'screen' ? ' on' : ''}`}
+                disabled={c.recording && c.recKind !== 'screen'}
+                onClick={() => void (c.recording ? stopRecording() : startRecording('screen'))}
+              >
+                <RecordIcon />
+                <span>{c.recording && c.recKind === 'screen' ? 'Stop' : 'Screen'}</span>
+              </button>
+            )}
           </>
         )}
         <button

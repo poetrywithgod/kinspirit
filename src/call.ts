@@ -12,6 +12,8 @@ import {
 } from 'livekit-client'
 import { ApiError, answerCall, callHost, callPass, callRow, callStatus, endCall, startCallRpc } from './api'
 import { addLocalAudio } from './library'
+import { EXTENSION, LABEL, RECORDER_TYPES, getRecFormat, resolveRecFormat, type RecFormat } from './recfmt'
+import { canEncodeMp3, startMp3, type Mp3Stream } from './mp3'
 
 export type Row = { id: string; name: string; muted: boolean; speaking: boolean; host: boolean; me: boolean }
 export type CallState = {
@@ -31,6 +33,7 @@ export type CallState = {
   startedAt: number
   recording: boolean
   recordingBy: string
+  recKind: '' | 'audio' | 'screen'
   notice: string
   error: string
 }
@@ -52,6 +55,7 @@ const idle: CallState = {
   startedAt: 0,
   recording: false,
   recordingBy: '',
+  recKind: '',
   notice: '',
   error: '',
 }
@@ -295,19 +299,26 @@ export async function hostAction(action: 'mute_all' | 'lock_all' | 'unlock_all' 
 }
 
 // ---------- recording (host, saved on this phone) ----------
+// Audio: Opus, AAC or MP3 (chosen in Settings), saved in the Audio tab.
+// Screen: the host's screen plus the call audio, saved as a video file in Downloads (computers only).
 
 let ctx: AudioContext | null = null
+let bus: GainNode | null = null
 let dest: MediaStreamAudioDestinationNode | null = null
 let mixer: MediaRecorder | null = null
+let mp3: Mp3Stream | null = null
+let display: MediaStream | null = null
+let kind: 'audio' | 'screen' = 'audio'
 let chunks: Blob[] = []
 let recStarted = 0
+let recFormat: RecFormat = 'opus'
 const sources = new Map<string, MediaStreamAudioSourceNode>()
 
 function mixTrack(key: string, t: MediaStreamTrack) {
-  if (!ctx || !dest) return
+  if (!ctx || !bus) return
   try {
     const src = ctx.createMediaStreamSource(new MediaStream([t]))
-    src.connect(dest)
+    src.connect(bus)
     sources.set(key, src)
   } catch {
     /* track not ready */
@@ -322,16 +333,32 @@ function announceRecording(on: boolean) {
   void room?.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ on })), { reliable: true, topic: 'rec' })
 }
 
-export function startRecording() {
-  if (!room || st.role !== 'host' || mixer) return
+export const canRecordScreen = () =>
+  typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getDisplayMedia && !/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+
+export async function startRecording(what: 'audio' | 'screen' = 'audio') {
+  if (!room || st.role !== 'host' || mixer || mp3 || st.recording) return
   if (typeof MediaRecorder === 'undefined') return set({ notice: 'Recording is not supported on this browser.' })
+  kind = what
+
+  // Ask for the screen first: browsers only allow this right after a tap.
+  if (what === 'screen') {
+    try {
+      display = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 15 }, audio: false })
+    } catch {
+      return set({ notice: 'Screen recording was cancelled.' })
+    }
+  }
+
   ctx = new AudioContext()
+  bus = ctx.createGain()
   dest = ctx.createMediaStreamDestination()
+  bus.connect(dest)
   // A silent source keeps the recording running even when nobody is talking.
   const keep = ctx.createOscillator()
   const mute = ctx.createGain()
   mute.gain.value = 0
-  keep.connect(mute).connect(dest)
+  keep.connect(mute).connect(bus)
   keep.start()
   for (const p of room.remoteParticipants.values()) {
     for (const pub of p.audioTrackPublications.values()) {
@@ -340,57 +367,122 @@ export function startRecording() {
   }
   const mine = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track?.mediaStreamTrack
   if (mine) mixTrack('local', mine)
-  const type = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find((t) => MediaRecorder.isTypeSupported(t))
+
   chunks = []
-  mixer = new MediaRecorder(dest.stream, { ...(type ? { mimeType: type } : {}), audioBitsPerSecond: 32000 })
-  mixer.ondataavailable = (e) => e.data.size > 0 && chunks.push(e.data)
   recStarted = Date.now()
-  mixer.start(2000)
-  set({ recording: true, recordingBy: 'You' })
+
+  if (what === 'screen') {
+    const type = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'].find((t) => MediaRecorder.isTypeSupported(t))
+    const stream = new MediaStream([...display!.getVideoTracks(), ...dest.stream.getAudioTracks()])
+    mixer = new MediaRecorder(stream, { ...(type ? { mimeType: type } : {}), videoBitsPerSecond: 1_200_000, audioBitsPerSecond: 64000 })
+    mixer.ondataavailable = (e) => e.data.size > 0 && chunks.push(e.data)
+    display!.getVideoTracks()[0].onended = () => stopRecording() // the browser's own "Stop sharing" button
+    mixer.start(2000)
+  } else {
+    const want = getRecFormat()
+    let use = resolveRecFormat(want)
+    if (use === 'mp3' && !canEncodeMp3(ctx)) use = resolveRecFormat(want === 'mp3' ? 'aac' : want) === 'mp3' ? null : resolveRecFormat(want === 'mp3' ? 'aac' : want)
+    if (!use) {
+      void ctx.close().catch(() => {})
+      ctx = bus = dest = null
+      return set({ notice: 'This phone cannot record audio in the browser.' })
+    }
+    recFormat = use
+    if (use === 'mp3') {
+      mp3 = await startMp3(ctx, bus)
+    } else {
+      const type = RECORDER_TYPES[use].find((t) => MediaRecorder.isTypeSupported(t))
+      mixer = new MediaRecorder(dest.stream, { ...(type ? { mimeType: type } : {}), audioBitsPerSecond: use === 'aac' ? 48000 : 32000 })
+      mixer.ondataavailable = (e) => e.data.size > 0 && chunks.push(e.data)
+      mixer.start(2000)
+    }
+    if (use !== want) set({ notice: `${LABEL[want]} is not available on this phone, so this call is recorded as ${LABEL[use]}.` })
+  }
+  set({ recording: true, recordingBy: 'You', recKind: what })
   announceRecording(true)
+}
+
+function fileLabel(title: string, when: Date) {
+  return `${title} – ${when.toLocaleDateString([], { day: 'numeric', month: 'short' })} ${when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+}
+
+function saveAudioRecording(blob: Blob, ext: string, title: string, cid: string, seconds: number) {
+  const when = new Date()
+  void addLocalAudio(
+    {
+      id: `rec-${when.getTime()}`,
+      name: `Call recording – ${fileLabel(title, when)}.${ext}`,
+      from: 'you',
+      conversation_id: cid,
+      size: blob.size,
+      duration: seconds,
+      added_at: Date.now(),
+    },
+    blob,
+  ).catch(() => {})
+}
+
+function downloadVideo(blob: Blob, title: string) {
+  const when = new Date()
+  const ext = blob.type.includes('mp4') ? 'mp4' : 'webm'
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `Screen recording – ${fileLabel(title, when)}.${ext}`.replace(/[\\/:*?"<>|]/g, '-')
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000)
 }
 
 function stopMixer(save: boolean) {
   const m = mixer
+  const enc = mp3
+  const k = kind
+  const fmt = recFormat
   const title = st.title
   const cid = st.cid
   const seconds = (Date.now() - recStarted) / 1000
   mixer = null
+  mp3 = null
   const finish = () => {
+    display?.getTracks().forEach((t) => t.stop())
+    display = null
     sources.forEach((s) => s.disconnect())
     sources.clear()
     void ctx?.close().catch(() => {})
     ctx = null
+    bus = null
     dest = null
+  }
+  if (enc) {
+    const blob = enc.stop()
+    finish()
+    if (save && blob.size > 0) saveAudioRecording(blob, EXTENSION.mp3, title, cid, seconds)
+    return
   }
   if (!m) return finish()
   m.onstop = () => {
     finish()
     if (!save || chunks.length === 0) return
-    const blob = new Blob(chunks, { type: m.mimeType || 'audio/webm' })
+    const blob = new Blob(chunks, { type: m.mimeType || (k === 'screen' ? 'video/webm' : 'audio/webm') })
     chunks = []
-    const when = new Date()
-    void addLocalAudio(
-      {
-        id: `rec-${when.getTime()}`,
-        name: `Call recording – ${title} – ${when.toLocaleDateString([], { day: 'numeric', month: 'short' })} ${when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
-        from: 'you',
-        conversation_id: cid,
-        size: blob.size,
-        duration: seconds,
-        added_at: Date.now(),
-      },
-      blob,
-    ).catch(() => {})
+    if (k === 'screen') downloadVideo(blob, title)
+    else saveAudioRecording(blob, EXTENSION[fmt], title, cid, seconds)
   }
   if (m.state !== 'inactive') m.stop()
   else m.onstop(new Event('stop'))
 }
 
 export function stopRecording() {
-  if (!mixer) return
+  if (!mixer && !mp3) return
+  const k = kind
   stopMixer(true)
-  set({ recording: false, recordingBy: '', notice: 'Recording saved in your Audio tab.' })
+  set({
+    recording: false,
+    recordingBy: '',
+    recKind: '',
+    notice: k === 'screen' ? 'Screen recording saved to your Downloads.' : `Recording saved in your Audio tab as ${LABEL[recFormat]}.`,
+  })
   if (room && room.state === ConnectionState.Connected) announceRecording(false)
 }
 
