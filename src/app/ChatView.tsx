@@ -121,6 +121,7 @@ export function ChatView({
   const [attach, setAttach] = useState(false)
   // "Audio file": the audio already on this phone through Kinspirit, plus a way to browse the phone's files.
   const [audioSheet, setAudioSheet] = useState(false)
+  const audioBrowse = useRef<HTMLInputElement>(null)
   const [audioPicked, setAudioPicked] = useState<Set<string>>(new Set())
   const [audioFilter, setAudioFilter] = useState('')
   const library = useLibrary()
@@ -470,7 +471,15 @@ export function ChatView({
     try {
       await downloadAudio(m, isGroup ? (names.get(m.sender_id) ?? 'a friend') : chat.name.replace(/^@/, ''))
     } catch (e) {
-      setNotes((n) => ({ ...n, [m.id]: e instanceof ApiError ? e.message : 'Download failed. Tap to retry.' }))
+      setNotes((n) => ({
+        ...n,
+        [m.id]:
+          m.sender_id === me
+            ? 'This file is only stored on the device you sent it from. Open Kinspirit there to play it.'
+            : e instanceof ApiError
+              ? e.message
+              : 'Download failed. Tap to retry.',
+      }))
     } finally {
       setSaving((c) => {
         const n = new Set(c)
@@ -764,7 +773,7 @@ export function ChatView({
                       >
                         {nowId === m.id && player.playing ? <PauseIcon /> : <PlayIcon />}
                       </button>
-                    ) : !mine ? (
+                    ) : (
                       <button
                         type="button"
                         className="audio-btn"
@@ -774,16 +783,12 @@ export function ChatView({
                       >
                         <DownloadIcon />
                       </button>
-                    ) : (
-                      <span className="audio-btn static" aria-hidden="true">
-                        <MusicIcon />
-                      </span>
                     )}
                     <span className="audio-info">
                       <span className="audio-name">{m.file_name ?? m.body}</span>
                       <span className="audio-sub">
                         {m.file_size ? fmtSize(m.file_size) : 'Audio'}
-                        {!mine && !have.has(m.id) && (saving.has(m.id) ? ' · Saving…' : ' · Tap to save')}
+                        {!have.has(m.id) && (saving.has(m.id) ? ' · Saving…' : mine ? ' · Sent from another device · Tap to get it' : ' · Tap to save')}
                         {have.has(m.id) && ' · On your phone'}
                       </span>
                       {notes[m.id] && <span className="audio-sub warn">{notes[m.id]}</span>}
@@ -836,19 +841,20 @@ export function ChatView({
       {audioSheet && (
         <div className="sheet-backdrop" role="presentation" onClick={() => setAudioSheet(false)}>
           <div className="sheet audio-sheet" role="dialog" aria-label="Send audio" onClick={(e) => e.stopPropagation()}>
-            <p className="sheet-title">Send audio</p>
+            <p className="sheet-title">Share audio files</p>
             <button
               type="button"
               className="menu-item"
               onClick={() => {
                 setAudioSheet(false)
-                picker.current?.click()
+                audioBrowse.current?.click()
               }}
             >
-              <MusicIcon /> Browse MP3 and other audio on this phone
+              <MusicIcon /> Choose audio from phone storage
             </button>
             <p className="muted small">
-              Tip: in your phone's Files or Music app, pick a song, tap Share, then choose Kinspirit.
+              This opens your phone's files. Tap the ☰ menu and choose Audio (or Downloads) to find your MP3s. You can also share a song to
+              Kinspirit from your Files or Music app.
             </p>
             {library && library.length > 0 && (
               <>
@@ -1108,6 +1114,17 @@ export function ChatView({
           ref={picker}
           type="file"
           accept={AUDIO_ACCEPT}
+          multiple
+          hidden
+          onChange={(e) => {
+            void pickFiles(e.target.files, 'audio')
+            e.target.value = ''
+          }}
+        />
+        <input
+          ref={audioBrowse}
+          type="file"
+          accept="*/*"
           multiple
           hidden
           onChange={(e) => {
