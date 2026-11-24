@@ -237,3 +237,27 @@ export const TicksIcon = ({ level }: { level: 'sent' | 'delivered' | 'read' }) =
     {level !== 'sent' && <path d="M8 8.5 9 10l7-8" />}
   </svg>
 )
+export const SpeakerIcon = () => (
+  <svg {...base}>
+    <path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4z" fill="currentColor" />
+    <path d="M15.5 9a4 4 0 010 6M18 6.5a7.5 7.5 0 010 11" />
+  </svg>
+)
+export const AddPersonIcon = () => (
+  <svg {...base}>
+    <circle cx="10" cy="8.5" r="3.5" />
+    <path d="M3.5 19c.6-3.4 3-5 6.5-5s5.9 1.6 6.5 5M19 8v6M16 11h6" />
+  </svg>
+)
+export const ScreenShareIcon = () => (
+  <svg {...base}>
+    <rect x="3" y="4.5" width="18" height="12" rx="2" />
+    <path d="M12 14V8.5M9.5 10.5L12 8l2.5 2.5M8 20h8" />
+  </svg>
+)
+export const VideoIcon = () => (
+  <svg {...base}>
+    <rect x="3" y="6.5" width="12.5" height="11" rx="2.5" />
+    <path d="M15.5 11l5-3v8l-5-3z" fill="currentColor" />
+  </svg>
+)

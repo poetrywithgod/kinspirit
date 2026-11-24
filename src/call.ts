@@ -34,6 +34,7 @@ export type CallState = {
   recording: boolean
   recordingBy: string
   recKind: '' | 'audio' | 'screen'
+  speaker: string
   notice: string
   error: string
 }
@@ -56,6 +57,7 @@ const idle: CallState = {
   recording: false,
   recordingBy: '',
   recKind: '',
+  speaker: '',
   notice: '',
   error: '',
 }
@@ -498,3 +500,23 @@ export const useCall = (): CallState =>
   )
 
 export const inCallWith = (cid: string) => st.phase !== 'idle' && st.cid === cid
+
+/**
+ * Speaker button: switches where the call sound comes out (loudspeaker, earpiece, headset, Bluetooth)
+ * when the browser lets apps choose. Many phones do not, and then the phone's own volume keys are used.
+ */
+export async function cycleSpeaker() {
+  try {
+    const list = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audiooutput')
+    const els = [...audioEls.values()] as (HTMLMediaElement & { setSinkId?: (id: string) => Promise<void> })[]
+    if (list.length < 2 || !els.length || !els[0].setSinkId) {
+      return set({ notice: 'Your phone does not let the browser switch speakers. Use the volume keys, or connect a headset.' })
+    }
+    const at = list.findIndex((d) => d.deviceId === st.speaker)
+    const next = list[(at + 1) % list.length]
+    await Promise.all(els.map((e) => e.setSinkId!(next.deviceId)))
+    set({ speaker: next.deviceId, notice: `Sound now plays on ${next.label || 'the next speaker'}.` })
+  } catch {
+    set({ notice: 'Could not switch the speaker on this phone.' })
+  }
+}

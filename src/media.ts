@@ -109,10 +109,14 @@ export function probeVideo(file: Blob): Promise<{ width?: number; height?: numbe
   })
 }
 
-// What each picker offers. The audio list names formats one by one (no "audio/*"), because on Android
-// "audio/*" makes the phone offer the sound recorder instead of the files on the phone.
+// What each picker offers. On Android, a list made only of audio types makes the phone show a small chooser
+// (Photos, Sound Recorder, Quick Share) instead of the Files app. Adding two general types (not "audio/*")
+// makes it open the real file browser, still filtered towards audio. Anything that is not audio is refused
+// after picking (see isAudioFile).
 export const AUDIO_ACCEPT =
-  '.mp3,.m4a,.aac,.wav,.flac,.ogg,.opus,.amr,.wma,audio/mpeg,audio/mp4,audio/x-m4a,audio/aac,audio/wav,audio/x-wav,audio/flac,audio/ogg,audio/opus,audio/amr,audio/x-ms-wma'
+  '.mp3,.m4a,.aac,.wav,.flac,.ogg,.opus,.amr,.wma,audio/mpeg,audio/mp4,audio/x-m4a,audio/aac,audio/wav,audio/x-wav,audio/flac,audio/ogg,audio/opus,audio/amr,audio/x-ms-wma,application/ogg,application/octet-stream'
+const AUDIO_EXT = /\.(mp3|m4a|aac|wav|flac|ogg|oga|opus|amr|wma|mka|3gp|webm)$/i
+export const isAudioFile = (f: File) => f.type.startsWith('audio/') || AUDIO_EXT.test(f.name)
 export const DOCUMENT_ACCEPT =
   '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.rtf,.csv,.odt,.ods,.odp,.zip,.rar,.7z,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/csv,application/zip'
 

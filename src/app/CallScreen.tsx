@@ -6,6 +6,7 @@ import {
   leaveCall,
   showCall,
   canRecordScreen,
+  cycleSpeaker,
   startRecording,
   stopRecording,
   toggleMic,
@@ -15,7 +16,7 @@ import {
 import { acceptIncoming, declineIncoming, useIncoming } from '../incoming'
 import { fmtDur } from '../time'
 import { Avatar } from './Avatar'
-import { CloseIcon, DotsIcon, DownIcon, HangupIcon, AnswerIcon, LockIcon, MicIcon, MicOffIcon, PhoneIcon, RecordIcon } from './icons'
+import { CloseIcon, DotsIcon, DownIcon, HangupIcon, AnswerIcon, LockIcon, MicIcon, MicOffIcon, PhoneIcon, RecordIcon, SpeakerIcon, AddPersonIcon, ScreenShareIcon, VideoIcon } from './icons'
 
 function useElapsed(since: number) {
   const [now, setNow] = useState(Date.now())
@@ -32,11 +33,18 @@ export function CallLayer() {
   const c = useCall()
   const secs = useElapsed(c.startedAt)
   const [menu, setMenu] = useState<Row | null>(null)
+  const [soon, setSoon] = useState('')
 
   useEffect(() => {
     document.documentElement.classList.toggle('in-call', c.phase !== 'idle' && !c.open)
     return () => document.documentElement.classList.remove('in-call')
   }, [c.phase, c.open])
+
+  useEffect(() => {
+    if (!soon) return
+    const t = setTimeout(() => setSoon(''), 3000)
+    return () => clearTimeout(t)
+  }, [soon])
 
   // Notes (like "Everyone has been muted") fade away by themselves.
   useEffect(() => {
@@ -68,6 +76,7 @@ export function CallLayer() {
   }
 
   const isHost = c.role === 'host'
+  const other = c.people.find((p) => !p.me)
   const connecting = c.phase === 'connecting'
 
   return (
@@ -86,7 +95,9 @@ export function CallLayer() {
                 ? 'Calling…'
                 : c.dial === 'ringing'
                   ? 'Ringing…'
-                  : `${c.people.length} in call · ${fmtDur(secs)}`}
+                  : c.direct
+                    ? 'Voice call'
+                    : `${c.people.length} in call · ${fmtDur(secs)}`}
             {c.locked && ' · Mics locked'}
           </p>
         </div>
@@ -97,82 +108,128 @@ export function CallLayer() {
           <span className="rec-dot" aria-hidden="true" /> {c.recordingBy === 'You' ? c.recKind === 'screen' ? 'You are recording your screen and this call' : 'You are recording this call' : `${c.recordingBy} is recording this call`}
         </p>
       )}
-      {c.notice && <p className="call-note">{c.notice}</p>}
+      {(soon || c.notice) && <p className="call-note">{soon || c.notice}</p>}
 
-      <ul className="people">
-        {c.people.map((p) => (
-          <li key={p.id} className={`person-row${p.speaking ? ' speaking' : ''}`}>
-            <Avatar src={null} name={p.name} size={46} />
-            <span className="row-main">
-              <span className="row-name">
-                @{p.name}
-                {p.me ? ' (you)' : ''}
+      {c.direct ? (
+        <div className="duo">
+          <div className={`duo-avatar${other?.speaking ? ' speaking' : ''}${c.dial !== 'none' || connecting ? ' calling' : ''}`}>
+            <span className="duo-ring" aria-hidden="true" />
+            <span className="duo-ring r2" aria-hidden="true" />
+            <Avatar src={null} name={c.title.replace(/^@/, '')} size={132} />
+          </div>
+          <p className="duo-name">{c.title}</p>
+          <p className="duo-state">
+            {connecting
+              ? 'Connecting…'
+              : c.dial === 'ringing'
+                ? 'Their phone is ringing…'
+                : c.dial === 'calling'
+                  ? 'Waiting for them to come online…'
+                  : other?.muted
+                    ? 'Their mic is off'
+                    : other?.speaking
+                      ? 'Talking…'
+                      : 'Listening'}
+          </p>
+          {c.dial === 'none' && !connecting && <p className="duo-time">{fmtDur(secs)}</p>}
+        </div>
+      ) : (
+        <ul className="people">
+          {c.people.map((p) => (
+            <li key={p.id} className={`person-row${p.speaking ? ' speaking' : ''}`}>
+              <Avatar src={null} name={p.name} size={46} />
+              <span className="row-main">
+                <span className="row-name">
+                  @{p.name}
+                  {p.me ? ' (you)' : ''}
+                </span>
+                {p.host && <span className="role small">Host</span>}
               </span>
-              {p.host && <span className="role small">Host</span>}
-            </span>
-            <span className={`mic-state${p.muted ? ' off' : ''}`} aria-label={p.muted ? 'Muted' : 'Mic on'}>
-              {p.muted ? <MicOffIcon /> : <MicIcon />}
-            </span>
-            {isHost && !p.me && (
-              <button type="button" className="icon-btn" aria-label={`Options for ${p.name}`} onClick={() => setMenu(p)}>
-                <DotsIcon />
-              </button>
-            )}
-          </li>
-        ))}
-        {connecting && <li className="muted center">Joining…</li>}
-        {!connecting && c.dial !== 'none' && (
-          <li className="muted center">{c.dial === 'ringing' ? 'Their phone is ringing…' : 'Waiting for them to come online…'}</li>
-        )}
-      </ul>
+              <span className={`mic-state${p.muted ? ' off' : ''}`} aria-label={p.muted ? 'Muted' : 'Mic on'}>
+                {p.muted ? <MicOffIcon /> : <MicIcon />}
+              </span>
+              {isHost && !p.me && (
+                <button type="button" className="icon-btn" aria-label={`Options for ${p.name}`} onClick={() => setMenu(p)}>
+                  <DotsIcon />
+                </button>
+              )}
+            </li>
+          ))}
+          {connecting && <li className="muted center">Joining…</li>}
+        </ul>
+      )}
 
-      <footer className="call-controls">
-        {isHost && (
-          <>
-            <button type="button" className="ctl" onClick={() => void hostAction('mute_all')}>
-              <MicOffIcon />
-              <span>Mute all</span>
-            </button>
-            <button type="button" className={`ctl${c.locked ? ' on' : ''}`} onClick={() => void hostAction(c.locked ? 'unlock_all' : 'lock_all')}>
-              <LockIcon />
-              <span>{c.locked ? 'Unlock' : 'Lock mics'}</span>
-            </button>
-            <button
-              type="button"
-              className={`ctl${c.recording && c.recKind !== 'screen' ? ' on' : ''}`}
-              disabled={c.recording && c.recKind === 'screen'}
-              onClick={() => void (c.recording ? stopRecording() : startRecording('audio'))}
-            >
-              <RecordIcon />
-              <span>{c.recording && c.recKind !== 'screen' ? 'Stop' : 'Record'}</span>
-            </button>
-            {canRecordScreen() && (
+      <footer className="call-dock">
+        <div className="dock-grid">
+          <button type="button" className="ctl" onClick={() => void cycleSpeaker()}>
+            <SpeakerIcon />
+            <span>Speaker</span>
+          </button>
+          <button type="button" className="ctl" onClick={() => setSoon('Adding someone to a call is coming soon.')}>
+            <AddPersonIcon />
+            <span>Add</span>
+          </button>
+          <button type="button" className="ctl soon" onClick={() => setSoon('Screen sharing is coming soon.')}>
+            <ScreenShareIcon />
+            <span>Share</span>
+          </button>
+          <button type="button" className="ctl soon" onClick={() => setSoon('Switching to video is coming soon.')}>
+            <VideoIcon />
+            <span>Video</span>
+          </button>
+          {isHost && (
+            <>
               <button
                 type="button"
-                className={`ctl${c.recording && c.recKind === 'screen' ? ' on' : ''}`}
-                disabled={c.recording && c.recKind !== 'screen'}
-                onClick={() => void (c.recording ? stopRecording() : startRecording('screen'))}
+                className={`ctl${c.recording && c.recKind !== 'screen' ? ' on' : ''}`}
+                disabled={c.recording && c.recKind === 'screen'}
+                onClick={() => void (c.recording ? stopRecording() : startRecording('audio'))}
               >
                 <RecordIcon />
-                <span>{c.recording && c.recKind === 'screen' ? 'Stop' : 'Screen'}</span>
+                <span>{c.recording && c.recKind !== 'screen' ? 'Stop' : 'Record'}</span>
               </button>
-            )}
-          </>
-        )}
-        <button
-          type="button"
-          className={`ctl big${c.micOn ? '' : ' off'}`}
-          disabled={!c.canSpeak || connecting}
-          aria-label={c.micOn ? 'Mute yourself' : 'Unmute yourself'}
-          onClick={() => void toggleMic()}
-        >
-          {c.micOn ? <MicIcon /> : <MicOffIcon />}
-          <span>{c.canSpeak ? (c.micOn ? 'Mute' : 'Unmute') : 'Locked'}</span>
-        </button>
-        <button type="button" className="ctl leave" aria-label="Leave call" onClick={leaveCall}>
-          <HangupIcon />
-          <span>Leave</span>
-        </button>
+              {canRecordScreen() && (
+                <button
+                  type="button"
+                  className={`ctl${c.recording && c.recKind === 'screen' ? ' on' : ''}`}
+                  disabled={c.recording && c.recKind !== 'screen'}
+                  onClick={() => void (c.recording ? stopRecording() : startRecording('screen'))}
+                >
+                  <RecordIcon />
+                  <span>{c.recording && c.recKind === 'screen' ? 'Stop' : 'Rec screen'}</span>
+                </button>
+              )}
+              {!c.direct && (
+                <>
+                  <button type="button" className="ctl" onClick={() => void hostAction('mute_all')}>
+                    <MicOffIcon />
+                    <span>Mute all</span>
+                  </button>
+                  <button type="button" className={`ctl${c.locked ? ' on' : ''}`} onClick={() => void hostAction(c.locked ? 'unlock_all' : 'lock_all')}>
+                    <LockIcon />
+                    <span>{c.locked ? 'Unlock' : 'Lock mics'}</span>
+                  </button>
+                </>
+              )}
+            </>
+          )}
+        </div>
+        <div className="dock-main">
+          <button
+            type="button"
+            className={`ctl big${c.micOn ? '' : ' off'}`}
+            disabled={!c.canSpeak || connecting}
+            aria-label={c.micOn ? 'Mute yourself' : 'Unmute yourself'}
+            onClick={() => void toggleMic()}
+          >
+            {c.micOn ? <MicIcon /> : <MicOffIcon />}
+            <span>{c.canSpeak ? (c.micOn ? 'Mute' : 'Unmute') : 'Locked'}</span>
+          </button>
+          <button type="button" className="ctl leave" aria-label="Leave call" onClick={leaveCall}>
+            <HangupIcon />
+            <span>{c.direct ? 'End' : 'Leave'}</span>
+          </button>
+        </div>
       </footer>
 
       {menu && (

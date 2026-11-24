@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ApiError, MAX_AUDIO_BYTES, MAX_MEDIA_BYTES, audioPath, deleteMessage, editMessage, fetchMessages, markRead, myId, sendAudio, sendMedia, sendMessage, sendVoice, groupMembers, type Message, type Person } from '../api'
-import { AUDIO_ACCEPT, DOCUMENT_ACCEPT, claimPick, isImage, readable, isVideo, prepareImage, probeVideo, typeOf, type Prepared } from '../media'
+import { AUDIO_ACCEPT, DOCUMENT_ACCEPT, isAudioFile, claimPick, isImage, readable, isVideo, prepareImage, probeVideo, typeOf, type Prepared } from '../media'
 import { keepOwnMedia } from '../mediaStore'
 import { Lightbox } from './Lightbox'
 import { MediaBubble } from './MediaBubble'
@@ -402,6 +402,10 @@ export function ChatView({
         continue
       }
       if (mode === 'audio') {
+        if (!isAudioFile(file)) {
+          setError(`“${file.name}” is not an audio file. Use “Any other file” for that one.`)
+          continue
+        }
         pickAudio(file)
         continue
       }
@@ -962,6 +966,7 @@ export function ChatView({
         <input
           ref={anyPicker}
           type="file"
+          accept="*/*"
           multiple
           hidden
           onChange={(e) => {
