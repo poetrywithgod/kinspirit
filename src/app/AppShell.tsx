@@ -39,11 +39,13 @@ function Shell({
   username,
   avatar,
   onAvatarChange,
+  onUsernameChange,
   onLogout: logout,
 }: {
   username: string
   avatar: string | null
   onAvatarChange: (url: string) => void
+  onUsernameChange: (username: string) => void
   onLogout: () => void
 }) {
   const onLogout = () => {
@@ -216,7 +218,7 @@ function Shell({
         {tab === 'meetings' && <MeetingsTab />}
         {tab === 'contacts' && <ContactsTab onOpen={setChat} autoFocus={focusSearch} />}
         {tab === 'audio' && <AudioTab />}
-        {tab === 'settings' && <SettingsTab username={username} avatar={avatar} onAvatarChange={onAvatarChange} onLogout={onLogout} />}
+        {tab === 'settings' && <SettingsTab username={username} avatar={avatar} onAvatarChange={onAvatarChange} onUsernameChange={onUsernameChange} onLogout={onLogout} />}
       </main>
 
       {tab !== 'audio' && <MiniPlayer onOpen={() => setTab('audio')} />}
@@ -245,6 +247,7 @@ export function AppShell(props: {
   username: string
   avatar: string | null
   onAvatarChange: (url: string) => void
+  onUsernameChange: (username: string) => void
   onLogout: () => void
 }) {
   return (

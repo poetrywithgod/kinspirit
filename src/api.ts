@@ -61,10 +61,49 @@ export async function signIn(email: string, password: string): Promise<LoginResu
     }
     throw e
   }
+  return afterLogin(session, email)
+}
+
+async function afterLogin(session: { user: { user_metadata?: Record<string, unknown> } }, email: string): Promise<LoginResult> {
   const profile = await getMyProfile()
   if (profile) return { kind: 'home', username: profile.username, avatar: profile.avatar_url }
   const phone = String(session.user.user_metadata?.phone ?? '')
   return { kind: 'onboard', email, phone }
+}
+
+/* ---------- Forgot / change password, change username ---------- */
+
+export const requestPasswordReset = (email: string) => auth.requestRecovery(email)
+
+/** Code from the email + a new password. Logs the person in and says where to go next. */
+export async function resetPassword(email: string, code: string, password: string): Promise<LoginResult> {
+  const session = await auth.resetPassword(email, code, password)
+  return afterLogin(session, email)
+}
+
+export const changePassword = (current: string, password: string) => auth.changePassword(current, password)
+
+export const USERNAME_RE = /^[a-z0-9_]{3,20}$/
+
+/** Changes my username (once every 7 days, enforced by the server). Returns the saved name. */
+export async function changeUsername(raw: string): Promise<string> {
+  const s = currentSession()
+  if (!s) throw new ApiError('no_session', 'Please log in again.')
+  const name = raw.trim().toLowerCase()
+  if (!USERNAME_RE.test(name)) throw new ApiError('bad_username', 'Use 3 to 20 letters, numbers or underscores.')
+  if (!(await isUsernameAvailable(name))) throw new ApiError('username_taken', 'That username is taken. Try another.', 409)
+  try {
+    await db.update('profiles', s.user.id, { username: name })
+  } catch (e) {
+    if (e instanceof ApiError) {
+      if (/username_recently_changed/.test(e.message)) {
+        throw new ApiError('username_recent', 'You can change your username once every 7 days. Try again later.', e.status)
+      }
+      if (e.code === '23505') throw new ApiError('username_taken', 'That username was just taken. Try another.', 409)
+    }
+    throw e
+  }
+  return name
 }
 
 export async function getMyProfile(): Promise<Profile | null> {

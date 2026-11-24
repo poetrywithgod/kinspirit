@@ -119,6 +119,8 @@ const FRIENDLY: Record<string, string> = {
   user_already_exists: 'That email already has an account. Log in instead.',
   email_exists: 'That email already has an account. Log in instead.',
   weak_password: 'Choose a stronger password.',
+  same_password: 'Your new password must be different from the old one.',
+  P0001: 'Something went wrong. Try again.',
   over_email_send_rate_limit: 'Too many emails sent. Wait a few minutes and try again.',
   over_request_rate_limit: 'Too many tries. Wait a minute and try again.',
   invalid_credentials: 'Email or password is wrong.',
@@ -222,6 +224,29 @@ export const auth = {
     const token = session?.access_token
     save(null)
     if (token) await request('/auth/v1/logout', { body: {}, token }).catch(() => undefined)
+  },
+
+  /** Emails a reset code (the server answers the same whether or not the email has an account). */
+  async requestRecovery(email: string): Promise<void> {
+    await call('/auth/v1/recover', { body: { email } })
+  },
+
+  /** Checks the emailed code, sets the new password, and logs the person in on this device. */
+  async resetPassword(email: string, token: string, password: string): Promise<Session> {
+    const t = toSession(await call<TokenResponse>('/auth/v1/verify', { body: { type: 'recovery', email, token } }))
+    await call('/auth/v1/user', { method: 'PUT', body: { password }, token: t.access_token })
+    save(t)
+    return t
+  },
+
+  /** Changes the password of the person who is logged in. Checks the current password first. */
+  async changePassword(current: string, password: string): Promise<void> {
+    const s = session
+    if (!s?.user.email) throw new ApiError('no_session', 'Please log in again.')
+    // Only checks the current password; the result is not saved.
+    await call('/auth/v1/token?grant_type=password', { body: { email: s.user.email, password: current } })
+    const token = await accessToken()
+    await call('/auth/v1/user', { method: 'PUT', body: { password }, token })
   },
 
   async signIn(email: string, password: string): Promise<Session> {

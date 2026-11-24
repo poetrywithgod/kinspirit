@@ -48,6 +48,32 @@ revoke insert, update on public.profiles from authenticated;
 grant insert (id, username, phone, avatar_url) on public.profiles to authenticated;
 grant update (id, username, phone, avatar_url) on public.profiles to authenticated;
 
+-- Usernames can be changed, but only once every 7 days (and never to a reserved name).
+alter table public.profiles add column if not exists username_changed_at timestamptz;
+
+create or replace function public.guard_username_change()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.username is distinct from old.username then
+    if lower(new.username) = any (array['admin','kinspirit','support','help','root']) then
+      raise exception 'username_reserved';
+    end if;
+    if old.username_changed_at is not null and old.username_changed_at > now() - interval '7 days' then
+      raise exception 'username_recently_changed';
+    end if;
+    new.username_changed_at := now();
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists profiles_guard_username on public.profiles;
+create trigger profiles_guard_username
+  before update on public.profiles
+  for each row execute function public.guard_username_change();
+
 -- 2. Username check ----------------------------------------------------------
 create or replace function public.username_available(u text)
 returns boolean

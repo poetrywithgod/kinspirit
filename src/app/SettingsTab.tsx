@@ -6,6 +6,7 @@ import { ApiError, myDiscoverable, setDiscoverable, updateAvatar } from '../api'
 import { PhotoCropper } from '../PhotoCropper'
 import { applyTheme, getTheme, type ThemePref } from '../theme'
 import { Avatar } from './Avatar'
+import { AccountCard } from './AccountCard'
 import { disablePush, enablePush, pushState, testPush, type PushState } from '../push'
 import { profileLink, shareProfile } from '../invite'
 import { setDataSaver, useDataSaver } from '../dataSaver'
@@ -22,11 +23,13 @@ export function SettingsTab({
   username,
   avatar,
   onAvatarChange,
+  onUsernameChange,
   onLogout,
 }: {
   username: string
   avatar: string | null
   onAvatarChange: (url: string) => void
+  onUsernameChange: (username: string) => void
   onLogout: () => void
 }) {
   const [info, setInfo] = useState<StorageInfo | null>(null)
@@ -119,6 +122,8 @@ export function SettingsTab({
           {photoMsg && <p className={photoMsg === 'Photo updated.' ? 'muted' : 'error'}>{photoMsg}</p>}
         </div>
       </div>
+
+      <AccountCard username={username} onUsernameChange={onUsernameChange} />
 
       <div className="settings-card">
         <h2 className="section-title flush">Saved on this phone</h2>

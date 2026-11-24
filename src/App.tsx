@@ -6,6 +6,8 @@ import { PatternLayer } from './PatternLayer'
 import { Profile } from './screens/Profile'
 import { VerifyEmail } from './screens/VerifyEmail'
 import { VerifyPhone } from './screens/VerifyPhone'
+import { ForgotPassword } from './screens/ForgotPassword'
+import { PasswordField } from './PasswordField'
 import { pendingInvite } from './invite'
 import { COUNTRIES, flag, guessCountry, normalizePhone, type Country } from './phone'
 
@@ -13,6 +15,7 @@ type Screen =
   | 'welcome'
   | 'signup'
   | 'login'
+  | 'forgot'
   | 'verifyEmail'
   | 'verifyPhone'
   | 'profile'
@@ -75,59 +78,6 @@ function Welcome({
         </div>
       </div>
     </main>
-  )
-}
-
-function EyeIcon({ off }: { off: boolean }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" />
-      <circle cx="12" cy="12" r="3" />
-      {off && <path d="M4 4l16 16" />}
-    </svg>
-  )
-}
-
-function PasswordField({
-  value,
-  onChange,
-  autoComplete,
-  placeholder = 'Password',
-}: {
-  value: string
-  onChange: (v: string) => void
-  autoComplete: string
-  placeholder?: string
-}) {
-  const [show, setShow] = useState(false)
-  return (
-    <div className="pill">
-      <input
-        id="password"
-        type={show ? 'text' : 'password'}
-        autoComplete={autoComplete}
-        placeholder={placeholder}
-        aria-label="Password"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      />
-      <button
-        type="button"
-        className="eye"
-        aria-label={show ? 'Hide password' : 'Show password'}
-        onClick={() => setShow((s) => !s)}
-      >
-        <EyeIcon off={show} />
-      </button>
-    </div>
   )
 }
 
@@ -256,10 +206,12 @@ function Signup({
 function Login({
   onBack,
   onSignup,
+  onForgot,
   onDone,
 }: {
   onBack: () => void
   onSignup: () => void
+  onForgot: () => void
   onDone: (r: LoginResult) => void
 }) {
   const [email, setEmail] = useState('')
@@ -312,6 +264,11 @@ function Login({
         {touched && !passwordOk && (
           <p className="error">Enter your password.</p>
         )}
+        <p className="switch">
+          <button type="button" onClick={onForgot}>
+            Forgot password?
+          </button>
+        </p>
 
         {formError && <p className="error center">{formError}</p>}
         <button type="submit" className="btn" disabled={busy}>
@@ -381,6 +338,22 @@ export default function App() {
     })()
   }, [])
 
+  const finishLogin = (r: LoginResult) => {
+    if (r.kind === 'verify-email') {
+      setEmail(r.email)
+      setScreen('verifyEmail')
+    } else if (r.kind === 'onboard') {
+      setEmail(r.email)
+      setPhone(r.phone)
+      setScreen('verifyPhone')
+    } else {
+      setUsername(r.username)
+      setAvatar(r.avatar)
+      cacheProfile({ username: r.username, avatar_url: r.avatar })
+      setScreen('home')
+    }
+  }
+
   switch (screen) {
     case 'welcome':
       return (
@@ -407,23 +380,12 @@ export default function App() {
         <Login
           onBack={() => setScreen('welcome')}
           onSignup={() => setScreen('signup')}
-          onDone={(r) => {
-            if (r.kind === 'verify-email') {
-              setEmail(r.email)
-              setScreen('verifyEmail')
-            } else if (r.kind === 'onboard') {
-              setEmail(r.email)
-              setPhone(r.phone)
-              setScreen('verifyPhone')
-            } else {
-              setUsername(r.username)
-              setAvatar(r.avatar)
-              cacheProfile({ username: r.username, avatar_url: r.avatar })
-              setScreen('home')
-            }
-          }}
+          onForgot={() => setScreen('forgot')}
+          onDone={finishLogin}
         />
       )
+    case 'forgot':
+      return <ForgotPassword onBack={() => setScreen('login')} onDone={finishLogin} />
     case 'verifyEmail':
       return (
         <VerifyEmail
@@ -454,6 +416,10 @@ export default function App() {
           onAvatarChange={(url) => {
             setAvatar(url)
             cacheProfile({ username, avatar_url: url })
+          }}
+          onUsernameChange={(u) => {
+            setUsername(u)
+            cacheProfile({ username: u, avatar_url: avatar })
           }}
           onLogout={() => {
             void signOut().finally(() => {
