@@ -9,8 +9,10 @@ import './index.css'
 import './App.css'
 import App from './App.tsx'
 import { applyTheme, getTheme } from './theme'
+import { captureInvite } from './invite'
 
 applyTheme(getTheme())
+captureInvite()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

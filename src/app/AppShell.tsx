@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { refreshBlocks } from '../blocks'
-import { joinGeneral, listConversations, myId } from '../api'
+import { joinGeneral, listConversations, markDelivered, myId, profileByUsername, startChat, type Person } from '../api'
+import { clearInvite, pendingInvite } from '../invite'
+import { ProfileView } from './ProfileView'
 import { resyncPush } from '../push'
 import { PushPrompt } from './PushPrompt'
 import { PatternLayer } from '../PatternLayer'
@@ -50,6 +52,17 @@ function Shell({
   }
   useEffect(() => void refreshBlocks(), [])
   useEffect(() => void resyncPush(), [])
+  usePolling(() => markDelivered().catch(() => undefined), 10000)
+  // Someone sent me their profile link: show their profile so I can message them.
+  const [invited, setInvited] = useState<Person | null>(null)
+  useEffect(() => {
+    const u = pendingInvite()
+    if (!u) return
+    clearInvite()
+    void profileByUsername(u)
+      .then((p) => p && p.id !== myId() && setInvited(p))
+      .catch(() => undefined)
+  }, [])
   // Everyone starts in the general group (once per phone; leaving it sticks).
   useEffect(() => {
     const key = `kinspirit.general.${myId()}`
@@ -114,7 +127,19 @@ function Shell({
     }
   }, [menu])
 
-  if (chat) return <ChatView chat={chat} onBack={() => setChat(null)} onRenamed={(name) => setChat({ ...chat, name })} />
+  const inviteView = invited && (
+    <ProfileView
+      person={invited}
+      onClose={() => setInvited(null)}
+      onMessage={(p) => {
+        setInvited(null)
+        void startChat(p.id)
+          .then((id) => setChat({ id, name: `@${p.username}`, avatar: p.avatar_url, kind: 'direct', userId: p.id }))
+          .catch(() => undefined)
+      }}
+    />
+  )
+  if (chat) return <>{inviteView}<ChatView chat={chat} onBack={() => setChat(null)} onRenamed={(name) => setChat({ ...chat, name })} /></>
   if (newGroup)
     return (
       <NewGroup
@@ -130,6 +155,7 @@ function Shell({
   return (
     <div className="app shell">
       <PatternLayer />
+      {inviteView}
       <header className="topbar">
         <div className="brand" role="img" aria-label="Kinspirit">
           <span className="brand-mark" />

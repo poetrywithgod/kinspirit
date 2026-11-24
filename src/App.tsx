@@ -6,6 +6,7 @@ import { PatternLayer } from './PatternLayer'
 import { Profile } from './screens/Profile'
 import { VerifyEmail } from './screens/VerifyEmail'
 import { VerifyPhone } from './screens/VerifyPhone'
+import { pendingInvite } from './invite'
 import { COUNTRIES, flag, guessCountry, normalizePhone, type Country } from './phone'
 
 type Screen =
@@ -42,6 +43,11 @@ function Welcome({
       </div>
       <div className="welcome-gap" />
       <div className="welcome-bottom">
+        {pendingInvite() && (
+          <p className="invite-line">
+            <strong>@{pendingInvite()}</strong> invited you to Kinspirit. Sign up or log in to chat with them.
+          </p>
+        )}
         {notice && (
           <p className="notice" role="alert">
             {notice}

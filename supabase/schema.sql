@@ -104,8 +104,10 @@ create table if not exists public.conversation_members (
   role            text not null default 'member' check (role in ('admin', 'member')),
   joined_at       timestamptz not null default now(),
   last_read_at    timestamptz not null default now(),
+  last_delivered_at timestamptz not null default now(),
   primary key (conversation_id, user_id)
 );
+alter table public.conversation_members add column if not exists last_delivered_at timestamptz not null default now();
 create index if not exists conversation_members_user_idx on public.conversation_members (user_id);
 
 create table if not exists public.messages (
@@ -491,7 +493,7 @@ language sql
 security definer
 set search_path = public
 as $$
-  update public.conversation_members set last_read_at = now()
+  update public.conversation_members set last_read_at = now(), last_delivered_at = now()
   where conversation_id = cid and user_id = auth.uid();
 $$;
 
@@ -1001,6 +1003,35 @@ $$;
 --   where conversation_id = (select id from public.conversations where direct_key = 'general')
 --     and user_id = (select id from public.profiles where username = 'YOUR_USERNAME');
 
+-- 15c. Message ticks (sent / delivered / read) and profile links -----------------------------
+-- Delivered: this person's app has fetched everything up to now (called from the app every few seconds, and only
+-- writes when something new arrived). Read: they opened the chat (mark_read).
+create or replace function public.mark_delivered()
+returns void language sql security definer set search_path = public as $$
+  update public.conversation_members cm set last_delivered_at = now()
+  from public.conversations c
+  where cm.user_id = auth.uid() and c.id = cm.conversation_id and cm.last_delivered_at < c.last_message_at;
+$$;
+
+-- For my messages in this chat: until when has EVERYONE else received / read them? (Empty for the general group.)
+create or replace function public.chat_receipts(cid uuid)
+returns table (delivered_at timestamptz, read_at timestamptz)
+language sql security definer set search_path = public stable as $$
+  select min(m.last_delivered_at), min(m.last_read_at)
+  from public.conversation_members m
+  where public.is_member(cid) and m.conversation_id = cid and m.user_id <> auth.uid()
+    and not exists (select 1 from public.conversations c where c.id = cid and c.direct_key = 'general');
+$$;
+
+-- Open someone's profile from a link like kinspirit.vercel.app/u/username.
+create or replace function public.profile_by_username(u text)
+returns table (id uuid, username text, avatar_url text)
+language sql security definer set search_path = public stable as $$
+  select p.id, p.username, p.avatar_url from public.profiles p
+  where p.username = lower(btrim(u)) and not public.is_blocked_between(auth.uid(), p.id)
+  limit 1;
+$$;
+
 -- 16. Function access (one place, for every function) -----------------------------------------
 -- Only signed-in users may run these.
 do $$
@@ -1018,7 +1049,8 @@ begin
     'block_user(uuid)', 'unblock_user(uuid)', 'my_blocks()', 'report_user(uuid, text, uuid, uuid)',
     'save_push_subscription(text, text, text)', 'remove_push_subscription(text)',
     'react(uuid, text)', 'conversation_reactions(uuid)', 'join_general()',
-    'match_phones(text[])', 'set_discoverable(boolean)', 'my_discoverable()'
+    'match_phones(text[])', 'set_discoverable(boolean)', 'my_discoverable()',
+    'mark_delivered()', 'chat_receipts(uuid)', 'profile_by_username(text)'
   ] loop
     execute format('revoke all on function public.%s from public', f);
     execute format('grant execute on function public.%s to authenticated', f);

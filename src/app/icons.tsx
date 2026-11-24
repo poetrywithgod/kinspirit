@@ -217,3 +217,23 @@ export const ChevronDownIcon = () => (
     <path d="M6 9l6 6 6-6" />
   </svg>
 )
+
+/** Message ticks: one = sent, two = delivered, two blue = read. */
+export const TicksIcon = ({ level }: { level: 'sent' | 'delivered' | 'read' }) => (
+  <svg
+    className={`ticks ${level}`}
+    viewBox="0 0 20 12"
+    width="17"
+    height="11"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    role="img"
+    aria-label={level === 'sent' ? 'Sent' : level === 'delivered' ? 'Delivered' : 'Read'}
+  >
+    <path d="M1.5 6.5 5 10 12 2" />
+    {level !== 'sent' && <path d="M8 8.5 9 10l7-8" />}
+  </svg>
+)

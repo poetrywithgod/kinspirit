@@ -7,6 +7,7 @@ import { PhotoCropper } from '../PhotoCropper'
 import { applyTheme, getTheme, type ThemePref } from '../theme'
 import { Avatar } from './Avatar'
 import { disablePush, enablePush, pushState, testPush, type PushState } from '../push'
+import { profileLink, shareProfile } from '../invite'
 import { setDataSaver, useDataSaver } from '../dataSaver'
 import { refreshBlocks, unblockPerson, useBlocks } from '../blocks'
 
@@ -63,6 +64,7 @@ export function SettingsTab({
   }
 
   const saver = useDataSaver()
+  const [shareMsg, setShareMsg] = useState('')
   const [disc, setDisc] = useState<boolean | null>(null)
   useEffect(() => {
     void myDiscoverable().then(setDisc).catch(() => undefined)
@@ -235,6 +237,24 @@ export function SettingsTab({
             )}
           </>
         )}
+      </div>
+
+      <div className="settings-card">
+        <h2 className="section-title flush">Your profile link</h2>
+        <p className="muted">Send this link to friends. They tap it, join (or log in) and land on your profile, ready to message you.</p>
+        <div className="link-box">{profileLink(username)}</div>
+        <div className="link-actions">
+          <button
+            type="button"
+            className="btn"
+            onClick={() =>
+              void shareProfile(username).then((r) => setShareMsg(r === 'copied' ? 'Link copied.' : r === 'failed' ? 'Could not share. Copy the link above.' : ''))
+            }
+          >
+            Share my link
+          </button>
+        </div>
+        {shareMsg && <p className="muted" role="status">{shareMsg}</p>}
       </div>
 
       <div className="settings-card">

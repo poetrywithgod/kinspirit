@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   ApiError,
   addContact,
+  cachedProfile,
   listContacts,
   searchPeople,
   startChat,
@@ -12,6 +13,7 @@ import type { ChatTarget } from './ChatsTab'
 import { SearchIcon } from './icons'
 import { ProfileView } from './ProfileView'
 import { FindFriends } from './FindFriends'
+import { shareProfile } from '../invite'
 
 let cache: Person[] | null = null
 
@@ -123,6 +125,16 @@ export function ContactsTab({ onOpen, autoFocus }: { onOpen: (c: ChatTarget) => 
 
       <button type="button" className="btn find-btn" onClick={() => setFinding(true)}>
         Find friends from my contacts
+      </button>
+      <button
+        type="button"
+        className="link-btn"
+        onClick={() => {
+          const me = cachedProfile()?.username
+          if (me) void shareProfile(me)
+        }}
+      >
+        Invite friends with my link
       </button>
 
       <h2 className="section-title">{showingResults ? 'People' : 'My contacts'}</h2>

@@ -2135,3 +2135,13 @@ button.sender { padding: 0; border: 0; background: none; font: inherit; font-wei
 .push-prompt p { margin: 0 0 0.6rem; font-size: 0.95rem; }
 .push-prompt-actions { display: flex; align-items: center; gap: 0.75rem; }
 .push-prompt-actions .btn { flex: 1; }
+
+/* Message ticks */
+.ticks { display: inline-block; vertical-align: -1px; margin-left: 0.3rem; opacity: 0.75; }
+.ticks.read { color: #53bdeb; opacity: 1; }
+.bubble.mine .ticks.read { color: #7fd4ff; }
+
+/* Profile link card */
+.link-box { display: flex; gap: 0.5rem; align-items: center; background: rgba(128,128,128,.14); border-radius: 0.8rem; padding: 0.55rem 0.75rem; word-break: break-all; font-size: 0.9rem; }
+.link-actions { display: flex; gap: 0.75rem; margin-top: 0.5rem; }
+.invite-line { text-align: center; font-size: 0.95rem; margin: 0 0 0.75rem; }

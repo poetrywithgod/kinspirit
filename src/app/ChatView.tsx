@@ -7,7 +7,8 @@ import { MediaBubble } from './MediaBubble'
 import { ProfileView } from './ProfileView'
 import { ReportSheet } from './ReportSheet'
 import { QUICK_REACTIONS, STICKERS } from '../stickers'
-import { listReactions, reactTo, type Reaction } from '../api'
+import { chatReceipts, listReactions, reactTo, type Reaction, type Receipts } from '../api'
+import { TicksIcon } from './icons'
 import { useBlocks } from '../blocks'
 import { downloadAudio, keepOwnAudio, useLibrary } from '../library'
 import { syncIncomingMedia } from '../mediaSync'
@@ -116,6 +117,7 @@ export function ChatView({
   const [profile, setProfile] = useState<Person | null>(null)
   const [reporting, setReporting] = useState<Message | null>(null)
   const [reactions, setReactions] = useState<Reaction[]>([])
+  const [receipts, setReceipts] = useState<Receipts | null>(null)
   const [stickers, setStickers] = useState(false)
   const { isBlocked } = useBlocks()
   const iBlocked = !isGroup && isBlocked(chat.userId)
@@ -193,6 +195,11 @@ export function ChatView({
   usePolling(async () => {
     try {
       setReactions(await listReactions(chat.id))
+    } catch {
+      /* reactions are not set up yet, or offline: show none */
+    }
+    try {
+      setReceipts(await chatReceipts(chat.id))
     } catch {
       /* reactions are not set up yet, or offline: show none */
     }
@@ -712,6 +719,11 @@ export function ChatView({
                 })()}
                 <span className="bubble-meta">
                   {m.status === 'sending' ? (progress[m.id] ? `Sending ${Math.round(progress[m.id] * 100)}%` : 'Sending…') : m.status === 'failed' ? '' : `${m.edited_at && !m.deleted_at ? 'Edited · ' : ''}${clock(m.created_at)}`}
+                  {mine && !m.status && !m.deleted_at && (() => {
+                    const t = Date.parse(m.created_at)
+                    const level = receipts?.read_at && t <= Date.parse(receipts.read_at) ? 'read' : receipts?.delivered_at && t <= Date.parse(receipts.delivered_at) ? 'delivered' : 'sent'
+                    return <TicksIcon level={level} />
+                  })()}
                   {m.status === 'failed' && (
                     <button type="button" className="retry" onClick={() => retry(m)}>
                       Not sent. Tap to retry

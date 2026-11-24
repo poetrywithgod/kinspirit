@@ -462,3 +462,11 @@ export const joinGeneral = () => db.rpc<string>('join_general', {})
 export const matchPhones = (nums: string[]) => db.rpc<Person[]>('match_phones', { nums })
 export const setDiscoverable = async (on_off: boolean) => void (await db.rpc<unknown>('set_discoverable', { on_off }))
 export const myDiscoverable = () => db.rpc<boolean>('my_discoverable', {})
+
+// ---- Ticks and profile links ----
+export type Receipts = { delivered_at: string | null; read_at: string | null }
+export const chatReceipts = async (cid: string): Promise<Receipts> =>
+  (await db.rpc<Receipts[]>('chat_receipts', { cid }))[0] ?? { delivered_at: null, read_at: null }
+export const markDelivered = async () => void (await db.rpc<unknown>('mark_delivered', {}))
+export const profileByUsername = async (u: string): Promise<Person | null> =>
+  (await db.rpc<Person[]>('profile_by_username', { u }))[0] ?? null
