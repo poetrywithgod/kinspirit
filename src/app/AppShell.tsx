@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { refreshBlocks } from '../blocks'
 import { joinGeneral, listConversations, myId } from '../api'
 import { resyncPush } from '../push'
+import { PushPrompt } from './PushPrompt'
 import { PatternLayer } from '../PatternLayer'
 import { NewGroup } from './NewGroup'
 import { ChatView } from './ChatView'
@@ -217,6 +218,7 @@ export function AppShell(props: {
       <Shell {...props} />
       <CallLayer />
       <IncomingLayer />
+      <PushPrompt />
     </>
   )
 }

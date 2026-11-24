@@ -8,8 +8,11 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      workbox: { importScripts: ['push-sw.js'] },
-      includeAssets: ['logo-mark.png', 'logo-word.png', 'push-sw.js'],
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.js',
+      injectManifest: { globPatterns: ['**/*.{js,css,html,png,svg,webmanifest}'] },
+      includeAssets: ['logo-mark.png', 'logo-word.png'],
       manifest: {
         name: 'Kinspirit',
         short_name: 'Kinspirit',

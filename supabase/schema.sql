@@ -1025,6 +1025,14 @@ begin
   end loop;
 end $$;
 
+-- The Edge Functions (send-push, cleanup-files) use the server key. New projects do not hand out table
+-- access automatically, so grant exactly what they need.
+grant usage on schema public to service_role;
+grant select on public.messages, public.conversations, public.conversation_members,
+                public.profiles, public.blocks to service_role;
+grant update on public.messages to service_role;
+grant select, delete on public.push_subscriptions to service_role;
+
 -- Internal only: the app can never call these directly.
 revoke all on function public.is_blocked_between(uuid, uuid) from public, anon, authenticated;
 revoke all on function public.touch_conversation()           from public, anon, authenticated;

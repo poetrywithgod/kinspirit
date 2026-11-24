@@ -6,7 +6,7 @@ import { ApiError, myDiscoverable, setDiscoverable, updateAvatar } from '../api'
 import { PhotoCropper } from '../PhotoCropper'
 import { applyTheme, getTheme, type ThemePref } from '../theme'
 import { Avatar } from './Avatar'
-import { disablePush, enablePush, pushState, type PushState } from '../push'
+import { disablePush, enablePush, pushState, testPush, type PushState } from '../push'
 import { setDataSaver, useDataSaver } from '../dataSaver'
 import { refreshBlocks, unblockPerson, useBlocks } from '../blocks'
 
@@ -69,6 +69,7 @@ export function SettingsTab({
   }, [])
   const [push, setPush] = useState<PushState | null>(null)
   const [pushBusy, setPushBusy] = useState(false)
+  const [pushMsg, setPushMsg] = useState<{ ok: boolean; text: string } | null>(null)
   useEffect(() => {
     void pushState().then(setPush)
   }, [])
@@ -198,12 +199,40 @@ export function SettingsTab({
                 disabled={push === null || pushBusy}
                 onChange={(e) => {
                   setPushBusy(true)
+                  setPushMsg(null)
                   const go = e.target.checked ? enablePush() : disablePush().then(() => pushState())
-                  void go.then(setPush).catch(() => void pushState().then(setPush)).finally(() => setPushBusy(false))
+                  void go
+                    .then(setPush)
+                    .catch((err: unknown) => {
+                      setPushMsg({ ok: false, text: err instanceof Error ? err.message : 'Could not change notifications.' })
+                      void pushState().then(setPush)
+                    })
+                    .finally(() => setPushBusy(false))
                 }}
               />
               <span>Tell me about new messages and calls, even when Kinspirit is closed</span>
             </label>
+            {push === 'on' && (
+              <button
+                type="button"
+                className="link-btn"
+                disabled={pushBusy}
+                onClick={() => {
+                  setPushBusy(true)
+                  setPushMsg({ ok: true, text: 'Sending…' })
+                  void testPush()
+                    .then(setPushMsg)
+                    .finally(() => setPushBusy(false))
+                }}
+              >
+                Send me a test notification
+              </button>
+            )}
+            {pushMsg && (
+              <p className={pushMsg.ok ? 'muted' : 'error'} role="status">
+                {pushMsg.text}
+              </p>
+            )}
           </>
         )}
       </div>

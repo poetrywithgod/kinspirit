@@ -112,7 +112,7 @@ export function probeVideo(file: Blob): Promise<{ width?: number; height?: numbe
 // What each picker offers. The audio list names formats one by one (no "audio/*"), because on Android
 // "audio/*" makes the phone offer the sound recorder instead of the files on the phone.
 export const AUDIO_ACCEPT =
-  '.mp3,.m4a,.aac,.ogg,.oga,.opus,.wav,.flac,.amr,.wma,.mka,.3gp,audio/mpeg,audio/mp4,audio/x-m4a,audio/aac,audio/ogg,audio/wav,audio/x-wav,audio/flac,audio/amr,audio/x-ms-wma,application/ogg'
+  '.mp3,.m4a,.aac,.wav,.flac,.ogg,.opus,.amr,.wma,audio/mpeg,audio/mp4,audio/x-m4a,audio/aac,audio/wav,audio/x-wav,audio/flac,audio/ogg,audio/opus,audio/amr,audio/x-ms-wma'
 export const DOCUMENT_ACCEPT =
   '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.rtf,.csv,.odt,.ods,.odp,.zip,.rar,.7z,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/csv,application/zip'
 
