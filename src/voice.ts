@@ -70,6 +70,16 @@ export async function playVoice(m: Message) {
   await a.play().catch(() => set({ playing: false, errorId: m.id, error: 'Could not play this voice note.' }))
 }
 
+/** Jump to a point in the voice note that is playing (0..1). */
+export function seekVoice(fraction: number) {
+  if (!el || !el.src) return
+  const d = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : st.duration
+  if (d > 0) {
+    el.currentTime = Math.max(0, Math.min(1, fraction)) * d
+    set({ time: el.currentTime })
+  }
+}
+
 export function cycleRate() {
   const rate = st.rate === 1 ? 1.5 : st.rate === 1.5 ? 2 : 1
   if (el) el.playbackRate = rate

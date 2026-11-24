@@ -659,6 +659,19 @@ end;
 $$;
 
 -- 12. Calls ---------------------------------------------------------------------------
+-- Invitations to join a call that is already running ("add someone"). The invited person gets a ring,
+-- and may enter the call's room even though they are not a member of that chat.
+create table if not exists public.call_invites (
+  id              uuid primary key default gen_random_uuid(),
+  conversation_id uuid not null references public.conversations (id) on delete cascade,
+  user_id         uuid not null references public.profiles (id) on delete cascade,
+  invited_by      uuid not null references public.profiles (id) on delete cascade,
+  status          text not null default 'ringing',
+  created_at      timestamptz not null default now()
+);
+create index if not exists call_invites_user_idx on public.call_invites (user_id, status, created_at desc);
+alter table public.call_invites enable row level security;
+
 -- Used by the "livekit-token" Edge Function: am I in this chat, and am I a host?
 -- Hosts are group admins. In one-to-one chats both people are equal.
 create or replace function public.call_info(cid uuid)
@@ -672,7 +685,14 @@ as $$
   from public.conversation_members m
   join public.conversations c on c.id = m.conversation_id
   join public.profiles p on p.id = m.user_id
-  where m.conversation_id = cid and m.user_id = auth.uid();
+  where m.conversation_id = cid and m.user_id = auth.uid()
+  union all
+  select 'member', p.username
+  from public.call_invites i
+  join public.profiles p on p.id = i.user_id
+  where i.conversation_id = cid and i.user_id = auth.uid()
+    and i.status in ('ringing', 'answered') and i.created_at > now() - interval '12 hours'
+    and not exists (select 1 from public.conversation_members x where x.conversation_id = cid and x.user_id = auth.uid());
 $$;
 
 -- A call is a chat message (kind 'call') that carries its own status.
@@ -723,18 +743,30 @@ begin
   update public.messages m set call_status = 'missed', updated_at = now()
    where m.kind = 'call' and m.call_status = 'ringing' and m.created_at < now() - interval '45 seconds'
      and public.is_member(m.conversation_id);
+  update public.call_invites i set status = 'missed'
+   where i.user_id = auth.uid() and i.status = 'ringing' and i.created_at < now() - interval '45 seconds';
   update public.messages m set call_ringing_at = now(), updated_at = now()
    where m.kind = 'call' and m.call_status = 'ringing' and m.call_ringing_at is null
      and m.sender_id <> auth.uid() and m.created_at > now() - interval '45 seconds'
      and public.is_member(m.conversation_id);
   return query
-    select m.id, m.conversation_id, c.kind, c.title, m.sender_id, p.username, p.avatar_url, m.created_at
-      from public.messages m
-      join public.conversations c on c.id = m.conversation_id
-      join public.profiles p on p.id = m.sender_id
-     where m.kind = 'call' and m.call_status = 'ringing' and m.sender_id <> auth.uid()
-       and m.created_at > now() - interval '45 seconds' and public.is_member(m.conversation_id)
-     order by m.created_at desc;
+    select x.id, x.conversation_id, x.kind, x.title, x.caller_id, x.caller_username, x.caller_avatar, x.created_at
+    from (
+      select m.id, m.conversation_id, c.kind::text as kind, c.title::text as title,
+             m.sender_id as caller_id, p.username::text as caller_username, p.avatar_url::text as caller_avatar, m.created_at
+        from public.messages m
+        join public.conversations c on c.id = m.conversation_id
+        join public.profiles p on p.id = m.sender_id
+       where m.kind = 'call' and m.call_status = 'ringing' and m.sender_id <> auth.uid()
+         and m.created_at > now() - interval '45 seconds' and public.is_member(m.conversation_id)
+      union all
+      select i.id, i.conversation_id, 'group'::text, ('@' || p.username || '''s call')::text,
+             i.invited_by, p.username::text, p.avatar_url::text, i.created_at
+        from public.call_invites i
+        join public.profiles p on p.id = i.invited_by
+       where i.user_id = auth.uid() and i.status = 'ringing' and i.created_at > now() - interval '45 seconds'
+    ) x
+    order by x.created_at desc;
 end;
 $$;
 
@@ -750,7 +782,12 @@ begin
   update public.messages m set call_status = 'answered', call_answered_at = now(), updated_at = now()
    where m.id = mid and m.kind = 'call' and m.call_status = 'ringing' and m.sender_id <> auth.uid()
      and m.created_at > now() - interval '60 seconds' and public.is_member(m.conversation_id);
+  update public.call_invites i set status = 'answered'
+   where i.id = mid and i.user_id = auth.uid() and i.status = 'ringing' and i.created_at > now() - interval '60 seconds';
   select m.call_status into s from public.messages m where m.id = mid and public.is_member(m.conversation_id);
+  if s is null then
+    select i.status into s from public.call_invites i where i.id = mid and i.user_id = auth.uid();
+  end if;
   return s;
 end;
 $$;
@@ -758,14 +795,48 @@ $$;
 -- Say no. In one-to-one chats the caller is told; in groups it only hides the call for the one who said no.
 create or replace function public.decline_call(mid uuid)
 returns void
-language sql
+language plpgsql
 security definer
 set search_path = public
 as $$
+begin
   update public.messages m set call_status = 'declined', updated_at = now()
    where m.id = mid and m.kind = 'call' and m.call_status = 'ringing' and m.sender_id <> auth.uid()
      and public.is_member(m.conversation_id)
      and exists (select 1 from public.conversations c where c.id = m.conversation_id and c.kind = 'direct');
+  update public.call_invites i set status = 'declined'
+   where i.id = mid and i.user_id = auth.uid() and i.status = 'ringing';
+end;
+$$;
+
+-- Add someone to a call that is running in this chat. They get a ring, and a pass to the call's room.
+-- Only people in the chat can invite; blocked people cannot be invited, and in a one-to-one chat the
+-- other person is already there.
+create or replace function public.invite_to_call(cid uuid, uid uuid)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare me uuid := auth.uid(); k text; iid uuid;
+begin
+  if me is null or not public.is_member(cid) then raise exception 'not allowed'; end if;
+  if uid is null or uid = me then raise exception 'pick someone else'; end if;
+  if not exists (select 1 from public.profiles p where p.id = uid) then raise exception 'person not found'; end if;
+  if public.is_blocked_between(me, uid) then raise exception 'cannot call this person right now'; end if;
+  select c.kind into k from public.conversations c where c.id = cid;
+  if k = 'direct' and exists (select 1 from public.conversation_members m where m.conversation_id = cid and m.user_id = uid) then
+    raise exception 'already in this call';
+  end if;
+  select i.id into iid from public.call_invites i
+   where i.conversation_id = cid and i.user_id = uid and i.status = 'ringing' and i.created_at > now() - interval '45 seconds';
+  if iid is not null then return iid; end if;
+  if (select count(*) from public.call_invites i where i.invited_by = me and i.created_at > now() - interval '10 minutes') >= 20 then
+    raise exception 'too many invitations, try again in a few minutes';
+  end if;
+  insert into public.call_invites (conversation_id, user_id, invited_by) values (cid, uid, me) returning id into iid;
+  return iid;
+end;
 $$;
 
 -- Hang up. Before anyone answers it counts as missed (or "cancelled" when the call failed to start);
@@ -948,9 +1019,36 @@ language sql security definer set search_path = public stable as $$
     and r.message_id in (select m.id from public.messages m where m.conversation_id = cid order by m.created_at desc limit 200);
 $$;
 
--- The general group: everyone can join and talk. Calling this puts the caller in it (creating it the first time).
-create or replace function public.join_general()
-returns uuid language plpgsql security definer set search_path = public as $$
+-- The general group is NOT open to everyone: people ask to join and an admin of the group says yes or no.
+-- (An older version added every new account automatically; that function is removed.)
+drop function if exists public.join_general();
+
+create table if not exists public.join_requests (
+  conversation_id uuid not null references public.conversations (id) on delete cascade,
+  user_id         uuid not null references public.profiles (id) on delete cascade,
+  status          text not null default 'pending',
+  created_at      timestamptz not null default now(),
+  decided_by      uuid references public.profiles (id) on delete set null,
+  primary key (conversation_id, user_id)
+);
+alter table public.join_requests enable row level security;
+
+-- Where am I with the general group? 'member', 'pending', 'declined' or 'none'.
+create or replace function public.general_status()
+returns text language plpgsql stable security definer set search_path = public as $$
+declare cid uuid; st text;
+begin
+  if auth.uid() is null then raise exception 'not signed in'; end if;
+  select id into cid from public.conversations where direct_key = 'general';
+  if cid is null then return 'none'; end if;
+  if exists (select 1 from public.conversation_members m where m.conversation_id = cid and m.user_id = auth.uid()) then return 'member'; end if;
+  select r.status into st from public.join_requests r where r.conversation_id = cid and r.user_id = auth.uid();
+  return coalesce(st, 'none');
+end; $$;
+
+-- Ask to join. Nothing happens until an admin approves. A declined request cannot be sent again.
+create or replace function public.request_general()
+returns text language plpgsql security definer set search_path = public as $$
 declare cid uuid;
 begin
   if auth.uid() is null then raise exception 'not signed in'; end if;
@@ -960,9 +1058,55 @@ begin
     on conflict (direct_key) do nothing returning id into cid;
     if cid is null then select id into cid from public.conversations where direct_key = 'general'; end if;
   end if;
-  insert into public.conversation_members (conversation_id, user_id) values (cid, auth.uid()) on conflict do nothing;
-  return cid;
+  if exists (select 1 from public.conversation_members m where m.conversation_id = cid and m.user_id = auth.uid()) then return 'member'; end if;
+  insert into public.join_requests (conversation_id, user_id) values (cid, auth.uid()) on conflict do nothing;
+  return (select r.status from public.join_requests r where r.conversation_id = cid and r.user_id = auth.uid());
 end; $$;
+
+-- Waiting requests for a group I am an admin of (empty for everyone else).
+create or replace function public.join_requests_for(cid uuid)
+returns table (user_id uuid, username text, avatar_url text, created_at timestamptz)
+language sql stable security definer set search_path = public as $$
+  select r.user_id, p.username, p.avatar_url, r.created_at
+    from public.join_requests r
+    join public.profiles p on p.id = r.user_id
+   where r.conversation_id = cid and r.status = 'pending'
+     and exists (select 1 from public.conversation_members m where m.conversation_id = cid and m.user_id = auth.uid() and m.role = 'admin')
+   order by r.created_at;
+$$;
+
+create or replace function public.review_join_request(cid uuid, uid uuid, approve boolean)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null
+     or not exists (select 1 from public.conversation_members m where m.conversation_id = cid and m.user_id = auth.uid() and m.role = 'admin') then
+    raise exception 'only an admin can do this';
+  end if;
+  update public.join_requests r set status = case when approve then 'approved' else 'declined' end, decided_by = auth.uid()
+   where r.conversation_id = cid and r.user_id = uid and r.status = 'pending';
+  if not found then return; end if;
+  if approve then
+    insert into public.conversation_members (conversation_id, user_id) values (cid, uid) on conflict do nothing;
+  end if;
+end; $$;
+
+-- Owner only (run in the SQL Editor, never from the app): make someone an admin of the general group.
+--   select public.make_general_admin('your_username');
+create or replace function public.make_general_admin(uname text)
+returns text language plpgsql security definer set search_path = public as $$
+declare cid uuid; uid uuid;
+begin
+  select id into uid from public.profiles where username = lower(btrim(uname));
+  if uid is null then return 'no such username'; end if;
+  select id into cid from public.conversations where direct_key = 'general';
+  if cid is null then
+    insert into public.conversations (kind, title, direct_key) values ('group', 'Kinspirit General', 'general') returning id into cid;
+  end if;
+  insert into public.conversation_members (conversation_id, user_id, role) values (cid, uid, 'admin')
+  on conflict (conversation_id, user_id) do update set role = 'admin';
+  return 'done';
+end; $$;
+revoke all on function public.make_general_admin(text) from public, anon, authenticated;
 
 -- Contact sync: which of these phone numbers (+2348031234567 form) belong to people on Kinspirit?
 -- Returns only username and photo, never a number. At most 500 per call and 3000 a day per person.
@@ -1044,11 +1188,12 @@ begin
     'create_group(text, uuid[])', 'group_members(uuid)', 'add_group_members(uuid, uuid[])',
     'remove_group_member(uuid, uuid)', 'set_group_admin(uuid, uuid, boolean)', 'rename_group(uuid, text)',
     'leave_group(uuid)', 'audio_saved(uuid)', 'call_info(uuid)',
-    'start_call(uuid)', 'incoming_calls()', 'answer_call(uuid)', 'decline_call(uuid)', 'end_call(uuid, boolean)',
+    'start_call(uuid)', 'invite_to_call(uuid, uuid)', 'incoming_calls()', 'answer_call(uuid)', 'decline_call(uuid)', 'end_call(uuid, boolean)',
     'edit_message(uuid, text)', 'delete_message(uuid)',
     'block_user(uuid)', 'unblock_user(uuid)', 'my_blocks()', 'report_user(uuid, text, uuid, uuid)',
     'save_push_subscription(text, text, text)', 'remove_push_subscription(text)',
-    'react(uuid, text)', 'conversation_reactions(uuid)', 'join_general()',
+    'react(uuid, text)', 'conversation_reactions(uuid)', 'general_status()', 'request_general()',
+    'join_requests_for(uuid)', 'review_join_request(uuid, uuid, boolean)',
     'match_phones(text[])', 'set_discoverable(boolean)', 'my_discoverable()',
     'mark_delivered()', 'chat_receipts(uuid)', 'profile_by_username(text)'
   ] loop

@@ -11,6 +11,32 @@ precacheAndRoute(self.__WB_MANIFEST)
 cleanupOutdatedCaches()
 registerRoute(new NavigationRoute(createHandlerBoundToURL('index.html')))
 
+// Files shared from other apps arrive as a form post. Park them in a cache and open the app.
+self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url)
+  if (event.request.method !== 'POST' || url.pathname !== '/share-target') return
+  event.respondWith(
+    (async () => {
+      try {
+        const form = await event.request.formData()
+        const files = form.getAll('files').filter((f) => typeof f !== 'string')
+        const cache = await caches.open('kinspirit-share')
+        for (const k of await cache.keys()) await cache.delete(k)
+        let i = 0
+        for (const f of files) {
+          await cache.put(
+            '/shared/' + i++,
+            new Response(f, { headers: { 'Content-Type': f.type || 'application/octet-stream', 'X-Name': encodeURIComponent(f.name || 'shared-file') } }),
+          )
+        }
+        return Response.redirect('/?share=' + files.length, 303)
+      } catch (e) {
+        return Response.redirect('/', 303)
+      }
+    })(),
+  )
+})
+
 self.addEventListener('push', (event) => {
   let d = {}
   try {

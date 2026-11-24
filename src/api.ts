@@ -381,7 +381,7 @@ export const audioSaved = (mid: string) => db.rpc<boolean>('audio_saved', { mid 
 
 
 /** Uploads a recorded voice note, then posts the message. Safe to retry. */
-export async function sendVoice(m: { id: string; conversation_id: string; blob: Blob; seconds: number }): Promise<void> {
+export async function sendVoice(m: { id: string; conversation_id: string; blob: Blob; seconds: number; wave?: string }): Promise<void> {
   const s = currentSession()
   if (!s) throw new ApiError('no_session', 'Please log in again.')
   const type = (m.blob.type || 'audio/webm').split(';')[0]
@@ -393,7 +393,7 @@ export async function sendVoice(m: { id: string; conversation_id: string; blob: 
       id: m.id,
       conversation_id: m.conversation_id,
       sender_id: s.user.id,
-      body: 'Voice note',
+      body: m.wave ? `Voice note${m.wave}` : 'Voice note',
       kind: 'voice',
       file_path: path,
       file_name: `voice.${ext}`,
@@ -419,6 +419,7 @@ export type IncomingCall = {
   created_at: string
 }
 export const startCallRpc = async (cid: string) => (await db.rpc<{ id: string; mine: boolean }[]>('start_call', { cid }))[0]
+export const inviteToCall = (cid: string, uid: string) => db.rpc<string>('invite_to_call', { cid, uid })
 export const incomingCalls = () => db.rpc<IncomingCall[]>('incoming_calls', {})
 export const answerCall = (mid: string) => db.rpc<string | null>('answer_call', { mid })
 export const declineCall = async (mid: string) => void (await db.rpc<unknown>('decline_call', { mid }))
@@ -456,7 +457,13 @@ export const reportUserRpc = async (who: string, reason: string, mid?: string, c
 export type Reaction = { message_id: string; user_id: string; emoji: string }
 export const listReactions = (cid: string) => db.rpc<Reaction[]>('conversation_reactions', { cid })
 export const reactTo = async (mid: string, emoji: string | null) => void (await db.rpc<unknown>('react', { mid, new_emoji: emoji }))
-export const joinGeneral = () => db.rpc<string>('join_general', {})
+export type GeneralStatus = 'member' | 'pending' | 'declined' | 'none'
+export const generalStatus = () => db.rpc<GeneralStatus>('general_status', {})
+export const requestGeneral = () => db.rpc<GeneralStatus>('request_general', {})
+export type JoinRequest = { user_id: string; username: string; avatar_url: string | null; created_at: string }
+export const joinRequestsFor = (cid: string) => db.rpc<JoinRequest[]>('join_requests_for', { cid })
+export const reviewJoinRequest = async (cid: string, uid: string, approve: boolean) =>
+  void (await db.rpc<unknown>('review_join_request', { cid, uid, approve }))
 
 // ---- Find friends by phone number ----
 export const matchPhones = (nums: string[]) => db.rpc<Person[]>('match_phones', { nums })

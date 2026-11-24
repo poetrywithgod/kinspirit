@@ -13,6 +13,7 @@ export default defineConfig({
       filename: 'sw.js',
       injectManifest: { globPatterns: ['**/*.{js,css,html,png,svg,webmanifest}'] },
       includeAssets: ['logo-mark.png', 'logo-word.png'],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       manifest: {
         name: 'Kinspirit',
         short_name: 'Kinspirit',
@@ -22,6 +23,23 @@ export default defineConfig({
         background_color: '#2C0107',
         display: 'standalone',
         start_url: '/',
+        // Lets the phone's Share menu send files (music, voice recordings, photos, documents) to Kinspirit.
+        share_target: {
+          action: '/share-target',
+          method: 'POST',
+          enctype: 'multipart/form-data',
+          params: {
+            files: [
+              {
+                name: 'files',
+                accept: [
+                  'audio/*', '.mp3', '.m4a', '.aac', '.wav', '.ogg', '.opus', '.flac', '.amr',
+                  'image/*', 'video/*', 'application/pdf', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.zip',
+                ],
+              },
+            ],
+          },
+        },
         icons: [
           { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },

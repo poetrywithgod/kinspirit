@@ -6,7 +6,9 @@ import {
   leaveCall,
   showCall,
   canRecordScreen,
+  addToCall,
   cycleSpeaker,
+  enableSound,
   startRecording,
   stopRecording,
   toggleMic,
@@ -14,6 +16,7 @@ import {
   type Row,
 } from '../call'
 import { acceptIncoming, declineIncoming, useIncoming } from '../incoming'
+import { listContacts, type Person } from '../api'
 import { fmtDur } from '../time'
 import { Avatar } from './Avatar'
 import { CloseIcon, DotsIcon, DownIcon, HangupIcon, AnswerIcon, LockIcon, MicIcon, MicOffIcon, PhoneIcon, RecordIcon, SpeakerIcon, AddPersonIcon, ScreenShareIcon, VideoIcon } from './icons'
@@ -34,6 +37,13 @@ export function CallLayer() {
   const secs = useElapsed(c.startedAt)
   const [menu, setMenu] = useState<Row | null>(null)
   const [soon, setSoon] = useState('')
+  const [adding, setAdding] = useState<Person[] | null>(null)
+  const [addFilter, setAddFilter] = useState('')
+  const openAdd = () => {
+    setAddFilter('')
+    setAdding([])
+    listContacts().then(setAdding).catch(() => setSoon('Could not load your contacts.'))
+  }
 
   useEffect(() => {
     document.documentElement.classList.toggle('in-call', c.phase !== 'idle' && !c.open)
@@ -68,7 +78,7 @@ export function CallLayer() {
     return (
       <button type="button" className="call-bar" onClick={() => showCall(true)}>
         <PhoneIcon />
-        <span className="call-bar-title">In call · {c.title}</span>
+        <span className="call-bar-title">{c.reconnecting ? 'Reconnecting…' : c.needsSound ? 'Tap to hear the call' : `In call · ${c.title}`}</span>
         <span className="call-bar-time">{fmtDur(secs)}</span>
         {c.recording && <span className="rec-dot" aria-label="Recording" />}
       </button>
@@ -108,9 +118,19 @@ export function CallLayer() {
           <span className="rec-dot" aria-hidden="true" /> {c.recordingBy === 'You' ? c.recKind === 'screen' ? 'You are recording your screen and this call' : 'You are recording this call' : `${c.recordingBy} is recording this call`}
         </p>
       )}
+      {c.reconnecting && (
+        <p className="call-note warn" role="status">
+          Your connection dropped. Reconnecting…
+        </p>
+      )}
+      {c.needsSound && (
+        <button type="button" className="call-note sound-btn" onClick={enableSound}>
+          🔈 Tap here to turn the call sound on
+        </button>
+      )}
       {(soon || c.notice) && <p className="call-note">{soon || c.notice}</p>}
 
-      {c.direct ? (
+      {c.direct && c.people.length <= 2 ? (
         <div className="duo">
           <div className={`duo-avatar${other?.speaking ? ' speaking' : ''}${c.dial !== 'none' || connecting ? ' calling' : ''}`}>
             <span className="duo-ring" aria-hidden="true" />
@@ -125,7 +145,9 @@ export function CallLayer() {
                 ? 'Their phone is ringing…'
                 : c.dial === 'calling'
                   ? 'Waiting for them to come online…'
-                  : other?.muted
+                  : c.peerAway
+                    ? 'They lost connection. Waiting for them to come back…'
+                    : other?.muted
                     ? 'Their mic is off'
                     : other?.speaking
                       ? 'Talking…'
@@ -165,7 +187,7 @@ export function CallLayer() {
             <SpeakerIcon />
             <span>Speaker</span>
           </button>
-          <button type="button" className="ctl" onClick={() => setSoon('Adding someone to a call is coming soon.')}>
+          <button type="button" className="ctl" onClick={() => openAdd()}>
             <AddPersonIcon />
             <span>Add</span>
           </button>
@@ -231,6 +253,35 @@ export function CallLayer() {
           </button>
         </div>
       </footer>
+
+      {adding && (
+        <div className="sheet-wrap" onClick={() => setAdding(null)}>
+          <div className="sheet" role="dialog" aria-label="Add someone to the call" onClick={(e) => e.stopPropagation()}>
+            <p className="sheet-title">Add someone to this call</p>
+            <input className="sheet-input" placeholder="Search your contacts" value={addFilter} onChange={(e) => setAddFilter(e.target.value)} />
+            <ul className="add-list">
+              {adding
+                .filter((p) => !c.people.some((x) => x.id === p.id) && p.username.includes(addFilter.trim().toLowerCase().replace(/^@/, '')))
+                .map((p) => (
+                  <li key={p.id}>
+                    <button
+                      type="button"
+                      className="menu-item add-row"
+                      onClick={() => {
+                        void addToCall(p)
+                        setAdding(null)
+                      }}
+                    >
+                      <Avatar src={p.avatar_url} name={p.username} size={36} />
+                      <span>@{p.username}</span>
+                    </button>
+                  </li>
+                ))}
+              {adding.length === 0 && <li className="muted center">No contacts yet. Add people in the Contacts tab first.</li>}
+            </ul>
+          </div>
+        </div>
+      )}
 
       {menu && (
         <div className="sheet-wrap" onClick={() => setMenu(null)}>

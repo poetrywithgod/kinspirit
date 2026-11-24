@@ -18,6 +18,8 @@ import { MiniPlayer } from './MiniPlayer'
 import { callStatus } from '../api'
 import { joinCall, showCall, startCall, useCall } from '../call'
 import { VoiceBubble } from './VoiceBubble'
+import { encodeWave } from '../wave'
+import { getAudioBlob } from '../localdb'
 import { startRecording, type Recording } from '../recorder'
 import { keepOwnVoice, useVoiceIds } from '../voice'
 import { GroupInfo } from './GroupInfo'
@@ -97,10 +99,14 @@ export function ChatView({
   chat,
   onBack,
   onRenamed,
+  shared,
+  onSharedUsed,
 }: {
   chat: ChatTarget
   onBack: () => void
   onRenamed: (title: string) => void
+  shared?: File[] | null
+  onSharedUsed?: () => void
 }) {
   const me = myId()
   const isGroup = chat.kind === 'group'
@@ -113,6 +119,11 @@ export function ChatView({
   const [confirmDelete, setConfirmDelete] = useState<Message | null>(null)
   const [busy, setBusy] = useState(false)
   const [attach, setAttach] = useState(false)
+  // "Audio file": the audio already on this phone through Kinspirit, plus a way to browse the phone's files.
+  const [audioSheet, setAudioSheet] = useState(false)
+  const [audioPicked, setAudioPicked] = useState<Set<string>>(new Set())
+  const [audioFilter, setAudioFilter] = useState('')
+  const library = useLibrary()
   const [viewer, setViewer] = useState<{ src: string; name: string; save?: () => void } | null>(null)
   const [profile, setProfile] = useState<Person | null>(null)
   const [reporting, setReporting] = useState<Message | null>(null)
@@ -134,7 +145,7 @@ export function ChatView({
   const [text, setText] = useState('')
   const list = useRef<HTMLDivElement>(null)
   const files = useRef(new Map<string, File>())
-  const voices = useRef(new Map<string, { blob: Blob; seconds: number }>())
+  const voices = useRef(new Map<string, { blob: Blob; seconds: number; wave: string }>())
   const voiceIds = useVoiceIds()
   const call = useCall()
   const [callInfo, setCallInfo] = useState<{ active: boolean; count: number } | null>(null)
@@ -153,6 +164,10 @@ export function ChatView({
   )
   const [rec, setRec] = useState<Recording | null>(null)
   const [recSecs, setRecSecs] = useState(0)
+  const [levels, setLevels] = useState<number[]>([])
+  const [holding, setHolding] = useState(false) // finger still on the mic button
+  const [slide, setSlide] = useState(0) // how far it has been dragged left (cancel)
+  const hold = useRef<{ x: number; y: number; t: number; released: boolean } | null>(null)
   const picker = useRef<HTMLInputElement>(null)
   const lib = useLibrary()
   const have = new Set((lib ?? []).map((x) => x.id))
@@ -261,7 +276,7 @@ export function ChatView({
       const vo = voices.current.get(m.id)
       const job =
         m.kind === 'voice' && vo
-          ? sendVoice({ id: m.id, conversation_id: m.conversation_id, blob: vo.blob, seconds: vo.seconds })
+          ? sendVoice({ id: m.id, conversation_id: m.conversation_id, blob: vo.blob, seconds: vo.seconds, wave: vo.wave })
           : m.kind === 'audio' && file
           ? sendAudio({ id: m.id, conversation_id: m.conversation_id, file })
           : (m.kind === 'image' || m.kind === 'video' || m.kind === 'file') && media.current.has(m.id)
@@ -388,7 +403,7 @@ export function ChatView({
   }
 
   /** Photos, videos, audio files and documents. Each keeps its own name and format. */
-  const pickFiles = async (list: FileList | null, mode: 'photo' | 'audio' | 'document') => {
+  const pickFiles = async (list: FileList | File[] | null, mode: 'photo' | 'audio' | 'document') => {
     const picked = Array.from(list ?? [])
     setAttach(false)
     for (const file of picked) {
@@ -467,15 +482,35 @@ export function ChatView({
 
   const MAX_VOICE_SECONDS = 600
 
+  // Files that came in through the phone's Share menu: send them into this chat.
+  const sharedDone = useRef(false)
+  useEffect(() => {
+    if (!shared || shared.length === 0 || sharedDone.current) return
+    sharedDone.current = true
+    void (async () => {
+      for (const f of shared) {
+        const audio = f.type.startsWith('audio/') || /\.(mp3|m4a|aac|ogg|opus|wav|flac|amr|wma)$/i.test(f.name)
+        await pickFiles([f], audio ? 'audio' : f.type.startsWith('image/') || f.type.startsWith('video/') ? 'photo' : 'document')
+      }
+      onSharedUsed?.()
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shared])
+
   useEffect(() => {
     if (!rec) return
     const t0 = Date.now()
     setRecSecs(0)
+    setLevels([])
     const iv = window.setInterval(() => {
       const secs = Math.floor((Date.now() - t0) / 1000)
       setRecSecs(secs)
     }, 250)
-    return () => window.clearInterval(iv)
+    const lv = window.setInterval(() => setLevels((cur) => [...cur.slice(-47), rec.level()]), 100)
+    return () => {
+      window.clearInterval(iv)
+      window.clearInterval(lv)
+    }
   }, [rec])
 
   // Leaving the chat while recording throws the recording away.
@@ -490,24 +525,72 @@ export function ChatView({
     try {
       setRec(await startRecording())
     } catch (e) {
+      hold.current = null
+      setHolding(false)
       setError(e instanceof ApiError ? e.message : 'Could not start recording.')
     }
+  }
+
+  // Hold the mic to record, let go to send, slide left to cancel, slide up to lock (hands-free).
+  // A quick tap also keeps recording hands-free, as before.
+  const onMicDown = (e: React.PointerEvent) => {
+    if (e.button !== 0 && e.pointerType === 'mouse') return
+    hold.current = { x: e.clientX, y: e.clientY, t: Date.now(), released: false }
+    setHolding(true)
+    setSlide(0)
+    const move = (ev: PointerEvent) => {
+      const h = hold.current
+      if (!h) return
+      const dx = ev.clientX - h.x
+      const dy = ev.clientY - h.y
+      setSlide(Math.min(0, dx))
+      if (dx < -110) {
+        end()
+        recRef.current?.cancel()
+        setRec(null)
+        setHolding(false)
+        hold.current = null
+      } else if (dy < -90) {
+        end()
+        setHolding(false) // locked: keeps recording until Send or the bin
+      }
+    }
+    const up = () => {
+      end()
+      const h = hold.current
+      if (!h) return
+      h.released = true
+      setHolding(false) // a quick tap keeps recording hands-free
+      setSlide(0)
+      if (recRef.current && Date.now() - h.t >= 450) void finishVoiceRef.current()
+    }
+    const end = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+    void beginVoice()
   }
 
   const finishVoice = async () => {
     const r = rec
     if (!r) return
+    hold.current = null
     setRec(null)
-    const { blob, seconds } = await r.stop()
+    const { blob, seconds, levels: lv } = await r.stop()
     if (seconds < 1 || blob.size === 0) return setError('Hold on a little longer to record a voice note.')
     const id = newId()
-    voices.current.set(id, { blob, seconds })
+    const wave = encodeWave(lv)
+    voices.current.set(id, { blob, seconds, wave })
     void keepOwnVoice(id, blob).catch(() => {})
     const m: Message = {
       id,
       conversation_id: chat.id,
       sender_id: me,
-      body: 'Voice note',
+      body: `Voice note${wave}`,
       created_at: new Date().toISOString(),
       kind: 'voice',
       duration: Math.max(1, Math.round(seconds)),
@@ -517,6 +600,16 @@ export function ChatView({
     setMessages((cur) => merge(cur, [m]))
     push(m)
   }
+
+  const finishVoiceRef = useRef<() => Promise<void>>(async () => {})
+  finishVoiceRef.current = finishVoice
+
+  // The finger lifted before the microphone was ready: send as soon as it is.
+  useEffect(() => {
+    const h = hold.current
+    if (rec && h?.released && Date.now() - h.t >= 450) void finishVoice()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rec])
 
   useEffect(() => {
     if (rec && recSecs >= MAX_VOICE_SECONDS) void finishVoice()
@@ -740,13 +833,80 @@ export function ChatView({
         })}
       </div>
 
+      {audioSheet && (
+        <div className="sheet-backdrop" role="presentation" onClick={() => setAudioSheet(false)}>
+          <div className="sheet audio-sheet" role="dialog" aria-label="Send audio" onClick={(e) => e.stopPropagation()}>
+            <p className="sheet-title">Send audio</p>
+            <button
+              type="button"
+              className="menu-item"
+              onClick={() => {
+                setAudioSheet(false)
+                picker.current?.click()
+              }}
+            >
+              <MusicIcon /> Browse MP3 and other audio on this phone
+            </button>
+            <p className="muted small">
+              Tip: in your phone's Files or Music app, pick a song, tap Share, then choose Kinspirit.
+            </p>
+            {library && library.length > 0 && (
+              <>
+                <input className="sheet-input" placeholder="Search audio already in Kinspirit" value={audioFilter} onChange={(e) => setAudioFilter(e.target.value)} />
+                <ul className="add-list">
+                  {library
+                    .filter((a) => a.name.toLowerCase().includes(audioFilter.trim().toLowerCase()))
+                    .map((a) => (
+                      <li key={a.id}>
+                        <label className="menu-item add-row">
+                          <input
+                            type="checkbox"
+                            checked={audioPicked.has(a.id)}
+                            onChange={() =>
+                              setAudioPicked((cur) => {
+                                const n = new Set(cur)
+                                if (!n.delete(a.id)) n.add(a.id)
+                                return n
+                              })
+                            }
+                          />
+                          <span className="row-main">
+                            <span className="row-name">{a.name}</span>
+                            <span className="audio-sub">{fmtSize(a.size)}</span>
+                          </span>
+                        </label>
+                      </li>
+                    ))}
+                </ul>
+              </>
+            )}
+            <button
+              type="button"
+              className="btn"
+              disabled={audioPicked.size === 0}
+              onClick={async () => {
+                const ids = [...audioPicked]
+                setAudioSheet(false)
+                for (const id of ids) {
+                  const meta = library?.find((a) => a.id === id)
+                  const blob = meta ? await getAudioBlob(id).catch(() => undefined) : undefined
+                  if (meta && blob) pickAudio(new File([blob], meta.name, { type: blob.type || 'audio/mpeg' }))
+                }
+              }}
+            >
+              {audioPicked.size > 0 ? `Send ${audioPicked.size}` : 'Choose audio to send'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {attach && (
         <div className="sheet-backdrop" role="presentation" onClick={() => setAttach(false)}>
           <div className="sheet" role="menu" onClick={(e) => e.stopPropagation()}>
             <button type="button" role="menuitem" onClick={() => { photoPicker.current?.click(); setAttach(false) }}>
               <ImageIcon /> Photo or video
             </button>
-            <button type="button" role="menuitem" onClick={() => { picker.current?.click(); setAttach(false) }}>
+            <button type="button" role="menuitem" onClick={() => { setAudioPicked(new Set()); setAudioFilter(''); setAudioSheet(true); setAttach(false) }}>
               <MusicIcon /> Audio file
             </button>
             <button type="button" role="menuitem" onClick={() => { docPicker.current?.click(); setAttach(false) }}>
@@ -908,19 +1068,33 @@ export function ChatView({
           </button>
         </div>
       ) : rec ? (
-        <div className="composer recording" role="status" aria-label="Recording a voice note">
-          <button type="button" className="icon-btn" aria-label="Cancel recording" onClick={() => {
-              rec.cancel()
-              setRec(null)
-            }}>
-            <TrashIcon />
-          </button>
+        <div className={`composer recording${holding ? ' holding' : ''}`} role="status" aria-label="Recording a voice note">
+          {holding ? (
+            <span className="rec-lock" aria-hidden="true">▲ slide up to lock</span>
+          ) : (
+            <button type="button" className="icon-btn" aria-label="Cancel recording" onClick={() => {
+                rec.cancel()
+                setRec(null)
+              }}>
+              <TrashIcon />
+            </button>
+          )}
           <span className="rec-dot" aria-hidden="true" />
           <span className="rec-time">{`${Math.floor(recSecs / 60)}:${String(recSecs % 60).padStart(2, '0')}`}</span>
-          <span className="rec-hint">Recording…</span>
-          <button type="button" className="send" aria-label="Send voice note" onClick={() => void finishVoice()}>
-            <SendIcon />
-          </button>
+          <span className="rec-wave" aria-hidden="true">
+            {levels.map((l, i) => (
+              <span key={i} style={{ height: `${Math.max(12, Math.round(l * 100))}%` }} />
+            ))}
+          </span>
+          {holding ? (
+            <span className="rec-hint slide" style={{ transform: `translateX(${slide}px)`, opacity: Math.max(0.2, 1 + slide / 120) }}>
+              ◀ slide to cancel
+            </span>
+          ) : (
+            <button type="button" className="send" aria-label="Send voice note" onClick={() => void finishVoice()}>
+              <SendIcon />
+            </button>
+          )}
         </div>
       ) : (
       <form
@@ -999,7 +1173,14 @@ export function ChatView({
             <SendIcon />
           </button>
         ) : (
-          <button type="button" className="send" aria-label="Record a voice note" onClick={() => void beginVoice()}>
+          <button
+            type="button"
+            className="send mic-hold"
+            aria-label="Record a voice note. Hold to record, let go to send."
+            onPointerDown={onMicDown}
+            onContextMenu={(e) => e.preventDefault()}
+            onClick={(e) => e.detail === 0 && void beginVoice()}
+          >
             <MicIcon />
           </button>
         )}

@@ -3,6 +3,9 @@ import {
   ApiError,
   addGroupMembers,
   groupMembers,
+  joinRequestsFor,
+  reviewJoinRequest,
+  type JoinRequest,
   leaveGroup,
   myId,
   removeGroupMember,
@@ -44,12 +47,14 @@ export function GroupInfo({
   const [title, setTitle] = useState(chat.name)
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState(false)
+  const [requests, setRequests] = useState<JoinRequest[]>([])
 
   const fail = (e: unknown) => setError(e instanceof ApiError ? e.message : 'Something went wrong. Try again.')
 
   const load = useCallback(async () => {
     try {
       setMembers(await groupMembers(chat.id))
+      setRequests(await joinRequestsFor(chat.id).catch(() => []))
       setError('')
     } catch (e) {
       fail(e)
@@ -121,6 +126,28 @@ export function GroupInfo({
             </span>
             <span className="row-name">Add people</span>
           </button>
+
+          {iAmAdmin && requests.length > 0 && (
+            <>
+              <h2 className="section-title">Waiting to join ({requests.length})</h2>
+              <ul className="rows">
+                {requests.map((r) => (
+                  <li key={r.user_id} className="row person">
+                    <Avatar src={r.avatar_url} name={r.username} />
+                    <span className="row-main">
+                      <span className="row-name">@{r.username}</span>
+                    </span>
+                    <button type="button" className="mini-btn" disabled={busy} onClick={() => void act(() => reviewJoinRequest(chat.id, r.user_id, true))}>
+                      Approve
+                    </button>
+                    <button type="button" className="mini-btn" disabled={busy} onClick={() => void act(() => reviewJoinRequest(chat.id, r.user_id, false))}>
+                      Decline
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
 
           <h2 className="section-title">Members</h2>
           {members === null && !error && <p className="muted center">Loading…</p>}

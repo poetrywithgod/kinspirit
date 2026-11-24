@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { refreshBlocks } from '../blocks'
-import { joinGeneral, listConversations, markDelivered, myId, profileByUsername, startChat, type Person } from '../api'
+import { listConversations, markDelivered, myId, profileByUsername, startChat, type Person } from '../api'
 import { clearInvite, pendingInvite } from '../invite'
 import { ProfileView } from './ProfileView'
 import { resyncPush } from '../push'
@@ -13,7 +13,9 @@ import { AudioTab } from './AudioTab'
 import { MiniPlayer } from './MiniPlayer'
 import { stop } from '../player'
 import { stopVoice } from '../voice'
-import { leaveCall } from '../call'
+import { leaveCall, resumeCall } from '../call'
+import { hasShared, takeShared } from '../share'
+import { ShareTo } from './ShareTo'
 import { CallLayer, IncomingLayer } from './CallScreen'
 import { pollIncoming } from '../incoming'
 import { ContactsTab } from './ContactsTab'
@@ -63,25 +65,19 @@ function Shell({
       .then((p) => p && p.id !== myId() && setInvited(p))
       .catch(() => undefined)
   }, [])
-  // Everyone starts in the general group (once per phone; leaving it sticks).
+  // A page refresh should not end a call: go back into it.
   useEffect(() => {
-    const key = `kinspirit.general.${myId()}`
-    try {
-      if (localStorage.getItem(key)) return
-    } catch {
-      return
-    }
-    joinGeneral()
-      .then(() => {
-        try {
-          localStorage.setItem(key, '1')
-        } catch {
-          /* storage blocked */
-        }
-      })
-      .catch(() => undefined)
+    void resumeCall()
   }, [])
   const [chat, setChat] = useState<ChatTarget | null>(null)
+  // Files shared from the phone's Files / Music / Gallery apps: choose who gets them.
+  const [sharing, setSharing] = useState<File[] | null>(null)
+  const [handOver, setHandOver] = useState<File[] | null>(null)
+  useEffect(() => {
+    if (!hasShared()) return
+    history.replaceState(null, '', location.pathname)
+    void takeShared().then((f) => f.length > 0 && setSharing(f))
+  }, [])
   // Tapping a notification opens that chat.
   useEffect(() => {
     const open = async (cid: string) => {
@@ -139,7 +135,19 @@ function Shell({
       }}
     />
   )
-  if (chat) return <>{inviteView}<ChatView chat={chat} onBack={() => setChat(null)} onRenamed={(name) => setChat({ ...chat, name })} /></>
+  if (sharing && !chat)
+    return (
+      <ShareTo
+        files={sharing}
+        onCancel={() => setSharing(null)}
+        onPick={(c) => {
+          setHandOver(sharing)
+          setSharing(null)
+          setChat(c)
+        }}
+      />
+    )
+  if (chat) return <>{inviteView}<ChatView chat={chat} shared={handOver} onSharedUsed={() => setHandOver(null)} onBack={() => setChat(null)} onRenamed={(name) => setChat({ ...chat, name })} /></>
   if (newGroup)
     return (
       <NewGroup

@@ -2242,3 +2242,58 @@ button.sender { padding: 0; border: 0; background: none; font: inherit; font-wei
 @media (prefers-reduced-motion: reduce) {
   .duo-ring { animation: none !important; }
 }
+.add-list { list-style: none; margin: 8px 0 0; padding: 0; max-height: 45vh; overflow-y: auto; }
+.add-row { display: flex; align-items: center; gap: 12px; width: 100%; }
+
+/* ---- voice notes: waveform, hold to record ---- */
+.voice-wave {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 30px;
+  cursor: pointer;
+}
+.voice-wave span {
+  flex: 1;
+  min-width: 2px;
+  border-radius: 2px;
+  background: color-mix(in srgb, currentColor 35%, transparent);
+}
+.voice-wave span.on {
+  background: currentColor;
+}
+.rec-wave {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 30px;
+  min-width: 0;
+  overflow: hidden;
+  justify-content: flex-end;
+}
+.rec-wave span {
+  flex: none;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--primary, #c42759);
+}
+.rec-hint.slide, .rec-lock {
+  flex: none;
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.mic-hold {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.composer.holding .rec-time { min-width: 3.2ch; }
+.general-card { margin: 8px 14px; display: grid; gap: 6px; }
+.general-card p { margin: 0; }
+.call-note.warn { background: rgba(210, 58, 74, 0.35); }
+.call-note.sound-btn { border: 0; color: inherit; font: inherit; text-align: left; width: calc(100% - 28px); background: rgba(255, 255, 255, 0.22); }
+.audio-sheet { display: grid; gap: 8px; max-height: 85vh; overflow-y: auto; }
+.muted.small { font-size: 13px; margin: 0; }

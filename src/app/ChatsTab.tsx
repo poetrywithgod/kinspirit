@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { ApiError, listConversations, myId, type Conversation } from '../api'
+import { useEffect, useState } from 'react'
+import { ApiError, generalStatus, listConversations, myId, requestGeneral, type Conversation, type GeneralStatus } from '../api'
 import { shortWhen } from '../time'
 import { usePolling } from '../usePolling'
 import { Avatar } from './Avatar'
@@ -30,6 +30,21 @@ export function ChatsTab({
   const [filter, setFilter] = useState<Filter>('all')
   const [error, setError] = useState('')
   const me = myId()
+  const [general, setGeneral] = useState<GeneralStatus | null>(null)
+  const [asking, setAsking] = useState(false)
+  useEffect(() => {
+    generalStatus().then(setGeneral).catch(() => undefined)
+  }, [])
+  const ask = async () => {
+    setAsking(true)
+    try {
+      setGeneral(await requestGeneral())
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not send the request.')
+    } finally {
+      setAsking(false)
+    }
+  }
 
   usePolling(async () => {
     try {
@@ -62,6 +77,22 @@ export function ChatsTab({
       </div>
 
       {error && <p className="error center">{error}</p>}
+
+      {(general === 'none' || general === 'pending') && (
+        <div className="settings-card general-card">
+          <strong>Kinspirit General</strong>
+          <p className="muted">
+            {general === 'pending'
+              ? 'Request sent. You will see the group here once an admin approves you.'
+              : 'The community chat for everyone on Kinspirit. An admin approves each person who asks to join.'}
+          </p>
+          {general === 'none' && (
+            <button type="button" className="mini-btn" disabled={asking} onClick={() => void ask()}>
+              {asking ? 'Sending…' : 'Ask to join'}
+            </button>
+          )}
+        </div>
+      )}
 
       {items === null && !error && <p className="muted center">Loading…</p>}
 
