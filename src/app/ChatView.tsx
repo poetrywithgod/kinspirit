@@ -214,7 +214,7 @@ export function ChatView({
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Could not load messages.')
     }
-  }, 4000)
+  }, 4000, true, false, true)
 
   usePolling(async () => {
     try {

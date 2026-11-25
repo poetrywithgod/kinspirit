@@ -8,6 +8,7 @@ import { applyTheme, getTheme, type ThemePref } from '../theme'
 import { Avatar } from './Avatar'
 import { AccountCard } from './AccountCard'
 import { SecurityCard } from './SecurityCard'
+import { useLiveStatus } from '../realtime'
 import { disablePush, enablePush, pushState, testPush, type PushState } from '../push'
 import { profileLink, shareProfile } from '../invite'
 import { setDataSaver, useDataSaver } from '../dataSaver'
@@ -33,6 +34,7 @@ export function SettingsTab({
   onUsernameChange: (username: string) => void
   onLogout: () => void
 }) {
+  const live = useLiveStatus()
   const [info, setInfo] = useState<StorageInfo | null>(null)
   const [autoAudio, setAutoAudio] = useState(autoSaveAudio())
   const [autoPhotos, setAutoPhotos] = useState(autoSavePhotos())
@@ -126,6 +128,17 @@ export function SettingsTab({
 
       <AccountCard username={username} onUsernameChange={onUsernameChange} />
       <SecurityCard username={username} />
+
+      <div className="settings-card">
+        <h2 className="section-title flush">Live updates</h2>
+        <p className="muted" role="status">
+          {live === 'live'
+            ? 'On. New messages show up instantly.'
+            : live === 'connecting'
+              ? 'Connecting… Messages still arrive within a few seconds.'
+              : 'Off. Messages arrive within a few seconds.'}
+        </p>
+      </div>
 
       <div className="settings-card">
         <h2 className="section-title flush">Saved on this phone</h2>

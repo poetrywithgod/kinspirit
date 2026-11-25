@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
-import { ApiError, USERNAME_RE, changePassword, changeUsername, isUsernameAvailable } from '../api'
+import { ApiError, USERNAME_RE, changePassword, changeUsername, deleteAccount, isUsernameAvailable } from '../api'
+import { signOutLocal } from '../supabase'
+import { disableLock } from '../appLock'
 import { PasswordField } from '../PasswordField'
 
-type Open = null | 'username' | 'password'
+type Open = null | 'username' | 'password' | 'delete'
 
 export function AccountCard({ username, onUsernameChange }: { username: string; onUsernameChange: (u: string) => void }) {
   const [open, setOpen] = useState<Open>(null)
@@ -16,6 +18,9 @@ export function AccountCard({ username, onUsernameChange }: { username: string; 
   // password form
   const [cur, setCur] = useState('')
   const [pw, setPw] = useState('')
+  // delete-account form
+  const [typed, setTyped] = useState('')
+  const [delPw, setDelPw] = useState('')
 
   const close = () => {
     setOpen(null)
@@ -23,6 +28,8 @@ export function AccountCard({ username, onUsernameChange }: { username: string; 
     setName('')
     setCur('')
     setPw('')
+    setTyped('')
+    setDelPw('')
     setAvail('idle')
   }
 
@@ -78,6 +85,24 @@ export function AccountCard({ username, onUsernameChange }: { username: string; 
     setBusy(false)
   }
 
+  const removeAccount = async () => {
+    if (typed.trim().toLowerCase() !== username) return setError('Type your username exactly to confirm.')
+    if (!delPw) return setError('Enter your password.')
+    setBusy(true)
+    setError('')
+    try {
+      await deleteAccount(delPw)
+      disableLock()
+      signOutLocal()
+      window.location.replace('/')
+      return
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'invalid_credentials') setError('Your password is wrong.')
+      else fail(e)
+    }
+    setBusy(false)
+  }
+
   return (
     <div className="settings-card">
       <h2 className="section-title flush">Account</h2>
@@ -110,7 +135,61 @@ export function AccountCard({ username, onUsernameChange }: { username: string; 
           >
             Change password
           </button>
+          <button
+            type="button"
+            className="btn btn-quiet danger-text"
+            onClick={() => {
+              setMsg('')
+              setOpen('delete')
+            }}
+          >
+            Delete account
+          </button>
         </div>
+      )}
+
+      {open === 'delete' && (
+        <form
+          noValidate
+          onSubmit={(e) => {
+            e.preventDefault()
+            void removeAccount()
+          }}
+        >
+          <p className="error" style={{ fontWeight: 700 }}>
+            This deletes your account for good.
+          </p>
+          <ul className="muted delete-list">
+            <li>Your login, profile, contacts and settings are removed.</li>
+            <li>You leave all groups. If you were the only admin, another member becomes admin.</li>
+            <li>Your one-to-one chats are removed for the other person too, and messages you sent are deleted.</li>
+            <li>Files saved on this phone are removed. Your username becomes free for anyone to take.</li>
+            <li>This cannot be undone.</li>
+          </ul>
+          <input
+            className="sheet-input"
+            aria-label={`Type ${username} to confirm`}
+            placeholder={`Type ${username} to confirm`}
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            value={typed}
+            onChange={(e) => {
+              setTyped(e.target.value)
+              setError('')
+            }}
+          />
+          <PasswordField className="pill" value={delPw} onChange={(v) => { setDelPw(v); setError('') }} autoComplete="current-password" placeholder="Your password" label="Your password" />
+          {error && <p className="error">{error}</p>}
+          <div className="sheet-actions">
+            <button type="button" className="btn btn-quiet" onClick={close} disabled={busy}>
+              Cancel
+            </button>
+            <button type="submit" className="btn delete-confirm" disabled={busy || typed.trim().toLowerCase() !== username || !delPw}>
+              {busy ? 'Deleting…' : 'Delete my account'}
+            </button>
+          </div>
+        </form>
       )}
 
       {open === 'username' && (

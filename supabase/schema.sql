@@ -663,6 +663,38 @@ begin
 end;
 $$;
 
+-- Delete my account: leaves my groups (an admin is chosen if I was the last), removes my one-to-one chats,
+-- then removes the login itself. Everything else tied to me (messages, contacts, blocks, reports, push) goes with it.
+create or replace function public.delete_my_account()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  me uuid := auth.uid();
+  g uuid;
+begin
+  if me is null then raise exception 'not signed in'; end if;
+  for g in
+    select c.id from public.conversations c
+    join public.conversation_members m on m.conversation_id = c.id and m.user_id = me
+    where c.kind = 'group' and c.direct_key is distinct from 'general'
+  loop
+    perform public.leave_group(g);
+  end loop;
+  delete from public.conversations c
+  where c.kind = 'direct' and c.direct_key is distinct from 'general'
+    and exists (select 1 from public.conversation_members m where m.conversation_id = c.id and m.user_id = me);
+  delete from auth.users where id = me;
+end;
+$$;
+
+drop policy if exists "users delete their own avatar" on storage.objects;
+create policy "users delete their own avatar"
+  on storage.objects for delete to authenticated
+  using (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
+
 -- 11. Saved audio files ---------------------------------------------------------------
 -- Returns true once everyone else in the chat has saved the file, so the server copy can be removed.
 create or replace function public.audio_saved(mid uuid)
@@ -1242,6 +1274,18 @@ language sql security definer set search_path = public stable as $$
   limit 1;
 $$;
 
+-- Live updates: let Supabase announce new and changed messages to the app at once.
+-- (Safe to re-run. Only people who may read a message are told about it.)
+do $$
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    begin
+      alter publication supabase_realtime add table public.messages;
+    exception when duplicate_object then null;
+    end;
+  end if;
+end $$;
+
 -- 16. Function access (one place, for every function) -----------------------------------------
 -- Only signed-in users may run these.
 do $$
@@ -1262,7 +1306,7 @@ begin
     'join_requests_for(uuid)', 'review_join_request(uuid, uuid, boolean)',
     'match_phones(text[])', 'set_discoverable(boolean)', 'my_discoverable()',
     'mark_delivered()', 'chat_receipts(uuid)', 'profile_by_username(text)',
-    'set_typing(uuid, boolean)', 'who_typing(uuid)'
+    'set_typing(uuid, boolean)', 'who_typing(uuid)', 'delete_my_account()'
   ] loop
     execute format('revoke all on function public.%s from public', f);
     execute format('grant execute on function public.%s to authenticated', f);

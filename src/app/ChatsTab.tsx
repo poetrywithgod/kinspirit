@@ -56,7 +56,7 @@ export function ChatsTab({
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Could not load your chats.')
     }
-  }, 8000)
+  }, 8000, true, false, true)
 
   const needle = find.trim().toLowerCase()
   const nameOf = (c: Conversation) => (c.kind === 'direct' ? `@${c.other_username ?? 'unknown'}` : (c.title ?? 'Group'))

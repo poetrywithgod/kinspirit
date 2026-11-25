@@ -239,12 +239,18 @@ export const auth = {
     return t
   },
 
+  /** Checks a password against the logged-in account without changing the saved log-in. */
+  async verifyPassword(current: string): Promise<void> {
+    const s = session
+    if (!s?.user.email) throw new ApiError('no_session', 'Please log in again.')
+    await call('/auth/v1/token?grant_type=password', { body: { email: s.user.email, password: current } })
+  },
+
   /** Changes the password of the person who is logged in. Checks the current password first. */
   async changePassword(current: string, password: string): Promise<void> {
     const s = session
     if (!s?.user.email) throw new ApiError('no_session', 'Please log in again.')
-    // Only checks the current password; the result is not saved.
-    await call('/auth/v1/token?grant_type=password', { body: { email: s.user.email, password: current } })
+    await this.verifyPassword(current)
     const token = await accessToken()
     await call('/auth/v1/user', { method: 'PUT', body: { password }, token })
   },
@@ -294,6 +300,9 @@ async function refreshNow(): Promise<string> {
     throw new ApiError('server_busy', 'The server is busy. Try again in a moment.', e instanceof ApiError ? e.status : 0)
   }
 }
+
+/** A current log-in token (refreshed when needed), for the live-updates connection. */
+export const getAccessToken = () => accessToken()
 
 async function accessToken(): Promise<string> {
   if (!session) throw new ApiError('no_session', 'Please log in again.')
@@ -402,6 +411,12 @@ export const storage = {
   },
 
   /** Puts a file in the private "chat-files" bucket (safe to repeat for the same path). */
+  /** Removes files from a storage bucket (my own uploads). Best effort: failures are ignored by callers. */
+  async remove(bucket: 'chat-files' | 'avatars', paths: string[]): Promise<void> {
+    if (!paths.length) return
+    await call(`/storage/v1/object/${bucket}`, { method: 'DELETE', body: { prefixes: paths }, token: await accessToken() })
+  },
+
   async uploadFile(path: string, file: Blob, contentType: string): Promise<void> {
     try {
       await call(`/storage/v1/object/chat-files/${path}`, {

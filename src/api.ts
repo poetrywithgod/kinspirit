@@ -83,6 +83,37 @@ export async function resetPassword(email: string, code: string, password: strin
 
 export const changePassword = (current: string, password: string) => auth.changePassword(current, password)
 
+/**
+ * Deletes my account for good. Asks for the password again, removes my files from the server,
+ * then the server removes the login and everything tied to it. My copies on this phone are wiped too.
+ */
+export async function deleteAccount(password: string): Promise<void> {
+  const s = currentSession()
+  if (!s) throw new ApiError('no_session', 'Please log in again.')
+  await auth.verifyPassword(password)
+  try {
+    const rows = await db.select<{ file_path: string }>(`messages?sender_id=eq.${s.user.id}&file_path=not.is.null&select=file_path&limit=1000`)
+    for (let i = 0; i < rows.length; i += 100) await storage.remove('chat-files', rows.slice(i, i + 100).map((r) => r.file_path))
+  } catch {
+    /* the nightly clean-up removes leftovers */
+  }
+  try {
+    const me = await getMyProfile()
+    const at = me?.avatar_url?.indexOf('/avatars/') ?? -1
+    if (me?.avatar_url && at >= 0) await storage.remove('avatars', [decodeURIComponent(me.avatar_url.slice(at + 9).split('?')[0])])
+  } catch {
+    /* an old photo may stay; it is no longer linked to anyone */
+  }
+  await disablePush().catch(() => undefined)
+  await db.rpc<unknown>('delete_my_account', {})
+  try {
+    indexedDB.deleteDatabase(`kinspirit-${s.user.id}`)
+  } catch {
+    /* nothing to wipe */
+  }
+  cacheProfile(null)
+}
+
 export const USERNAME_RE = /^[a-z0-9_]{3,20}$/
 
 /** Changes my username (once every 7 days, enforced by the server). Returns the saved name. */

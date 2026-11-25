@@ -2340,3 +2340,8 @@ button.sender { padding: 0; border: 0; background: none; font: inherit; font-wei
 .lock-msg { color: #fff !important; font-weight: 700 !important; }
 .lock-screen .btn { width: min(280px, 100%); min-height: 52px; margin-top: 8px; }
 .lock-link { background: transparent; border: 0; color: var(--mist); text-decoration: underline; font: 600 15px var(--font-body); padding: 12px; min-height: 44px; }
+
+/* ---- delete account ---- */
+.delete-list { margin: 6px 0 10px; padding-left: 20px; font-size: 14px; line-height: 1.45; }
+.btn.delete-confirm { background: var(--error); color: #fff; }
+.btn.delete-confirm:disabled { opacity: 0.5; }

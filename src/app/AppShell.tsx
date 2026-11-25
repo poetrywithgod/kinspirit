@@ -1,3 +1,4 @@
+import { startRealtime, stopRealtime } from '../realtime'
 import { useEffect, useRef, useState } from 'react'
 import { refreshBlocks } from '../blocks'
 import { listConversations, markDelivered, myId, profileByUsername, startChat, type Person } from '../api'
@@ -56,6 +57,10 @@ function Shell({
   }
   useEffect(() => void refreshBlocks(), [])
   useEffect(() => void resyncPush(), [])
+  useEffect(() => {
+    void startRealtime()
+    return stopRealtime
+  }, [])
   usePolling(() => markDelivered().catch(() => undefined), 10000)
   // Someone sent me their profile link: show their profile so I can message them.
   const [invited, setInvited] = useState<Person | null>(null)
