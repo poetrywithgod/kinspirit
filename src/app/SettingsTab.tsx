@@ -8,6 +8,7 @@ import { applyTheme, getTheme, type ThemePref } from '../theme'
 import { Avatar } from './Avatar'
 import { AccountCard } from './AccountCard'
 import { SecurityCard } from './SecurityCard'
+import { BackupCard } from './BackupCard'
 import { useLiveStatus } from '../realtime'
 import { disablePush, enablePush, pushState, testPush, type PushState } from '../push'
 import { profileLink, shareProfile } from '../invite'
@@ -128,6 +129,7 @@ export function SettingsTab({
 
       <AccountCard username={username} onUsernameChange={onUsernameChange} />
       <SecurityCard username={username} />
+      <BackupCard />
 
       <div className="settings-card">
         <h2 className="section-title flush">Live updates</h2>
