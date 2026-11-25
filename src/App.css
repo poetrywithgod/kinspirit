@@ -2345,3 +2345,6 @@ button.sender { padding: 0; border: 0; background: none; font: inherit; font-wei
 .delete-list { margin: 6px 0 10px; padding-left: 20px; font-size: 14px; line-height: 1.45; }
 .btn.delete-confirm { background: var(--error); color: #fff; }
 .btn.delete-confirm:disabled { opacity: 0.5; }
+
+/* ---- group rules ---- */
+.admins-only { flex: none; margin: 0; padding: 14px 16px calc(14px + env(safe-area-inset-bottom)); text-align: center; font: 600 14px var(--font-body); color: var(--text-muted); background: var(--sheet); border-top: 1px solid var(--divider); }

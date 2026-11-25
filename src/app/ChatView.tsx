@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { ApiError, MAX_AUDIO_BYTES, MAX_MEDIA_BYTES, audioPath, deleteMessage, editMessage, fetchMessages, fetchFrom, setTypingRpc, whoTyping, markRead, myId, sendAudio, sendMedia, sendMessage, sendVoice, groupMembers, type Message, type Person } from '../api'
+import { ApiError, MAX_AUDIO_BYTES, MAX_MEDIA_BYTES, audioPath, deleteMessage, editMessage, fetchMessages, fetchFrom, groupRules, type GroupRules, setTypingRpc, whoTyping, markRead, myId, sendAudio, sendMedia, sendMessage, sendVoice, groupMembers, type Message, type Person } from '../api'
 import { AUDIO_ACCEPT, DOCUMENT_ACCEPT, isAudioFile, claimPick, isImage, readable, isVideo, prepareImage, probeVideo, typeOf, type Prepared } from '../media'
 import { keepOwnMedia } from '../mediaStore'
 import { Lightbox } from './Lightbox'
@@ -123,6 +123,7 @@ export function ChatView({
   const [fwdNote, setFwdNote] = useState('')
   const [searching, setSearching] = useState(false)
   const [typers, setTypers] = useState<string[]>([])
+  const [rules, setRules] = useState<GroupRules | null>(null)
   const lastTyping = useRef(0)
   const [confirmDelete, setConfirmDelete] = useState<Message | null>(null)
   const [busy, setBusy] = useState(false)
@@ -228,6 +229,18 @@ export function ChatView({
       /* reactions are not set up yet, or offline: show none */
     }
   }, 5000)
+
+  // Group rules: in an announcement-style group only admins can write.
+  usePolling(async () => {
+    if (!isGroup) return
+    try {
+      const r = await groupRules(chat.id)
+      setRules((cur) => (JSON.stringify(cur) === JSON.stringify(r) ? cur : r))
+    } catch {
+      /* rules not set up yet: everyone can write */
+    }
+  }, 15000)
+  const readOnly = isGroup && !!rules?.only_admins_send && rules.my_role !== 'admin'
 
   // Typing indicator: ask who is typing every 3 s while this chat is open (off in data saver mode).
   usePolling(async () => {
@@ -1198,8 +1211,14 @@ export function ChatView({
           <span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>
         </p>
       )}
+      {readOnly && (
+        <p className="admins-only" role="status">
+          Only admins can send messages in this group.
+        </p>
+      )}
       <form
         className="composer"
+        style={readOnly ? { display: 'none' } : undefined}
         onSubmit={(e) => {
           e.preventDefault()
           send()

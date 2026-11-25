@@ -576,6 +576,11 @@ begin
   if not exists (select 1 from public.conversations c where c.id = cid and c.kind = 'group') then
     raise exception 'not a group';
   end if;
+  if exists (select 1 from public.conversations c where c.id = cid and c.only_admins_add)
+     and not exists (select 1 from public.conversation_members x
+                     where x.conversation_id = cid and x.user_id = auth.uid() and x.role = 'admin') then
+    raise exception 'only admins can add people to this group';
+  end if;
   select count(*) into n from public.conversation_members x where x.conversation_id = cid;
   if n >= 2000 then raise exception 'this group is full'; end if;
   insert into public.conversation_members (conversation_id, user_id)
@@ -1286,6 +1291,50 @@ begin
   end if;
 end $$;
 
+-- Group rules (set by admins): who may send messages, and who may add people.
+alter table public.conversations add column if not exists only_admins_send boolean not null default false;
+alter table public.conversations add column if not exists only_admins_add  boolean not null default false;
+
+-- Can I send in this chat? Members of one-to-one chats and groups without the rule: yes. Otherwise admins only.
+create or replace function public.can_send(cid uuid)
+returns boolean
+language sql security definer set search_path = public stable as $$
+  select exists (
+    select 1 from public.conversation_members m
+    join public.conversations c on c.id = m.conversation_id
+    where m.conversation_id = cid and m.user_id = auth.uid()
+      and (c.kind <> 'group' or not c.only_admins_send or m.role = 'admin')
+  );
+$$;
+
+drop policy if exists "members send messages" on public.messages;
+create policy "members send messages"
+  on public.messages for insert to authenticated
+  with check (sender_id = auth.uid() and public.can_send(conversation_id));
+
+create or replace function public.group_rules(cid uuid)
+returns table (only_admins_send boolean, only_admins_add boolean, my_role text)
+language sql security definer set search_path = public stable as $$
+  select c.only_admins_send, c.only_admins_add, m.role
+  from public.conversations c
+  join public.conversation_members m on m.conversation_id = c.id and m.user_id = auth.uid()
+  where c.id = cid and c.kind = 'group';
+$$;
+
+create or replace function public.set_group_rules(cid uuid, admins_send boolean, admins_add boolean)
+returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not exists (select 1 from public.conversation_members x
+                 where x.conversation_id = cid and x.user_id = auth.uid() and x.role = 'admin') then
+    raise exception 'only admins can change group rules';
+  end if;
+  update public.conversations
+  set only_admins_send = coalesce(admins_send, false), only_admins_add = coalesce(admins_add, false)
+  where id = cid and kind = 'group';
+end;
+$$;
+
 -- 16. Function access (one place, for every function) -----------------------------------------
 -- Only signed-in users may run these.
 do $$
@@ -1306,7 +1355,8 @@ begin
     'join_requests_for(uuid)', 'review_join_request(uuid, uuid, boolean)',
     'match_phones(text[])', 'set_discoverable(boolean)', 'my_discoverable()',
     'mark_delivered()', 'chat_receipts(uuid)', 'profile_by_username(text)',
-    'set_typing(uuid, boolean)', 'who_typing(uuid)', 'delete_my_account()'
+    'set_typing(uuid, boolean)', 'who_typing(uuid)', 'delete_my_account()',
+    'can_send(uuid)', 'group_rules(uuid)', 'set_group_rules(uuid, boolean, boolean)'
   ] loop
     execute format('revoke all on function public.%s from public', f);
     execute format('grant execute on function public.%s to authenticated', f);

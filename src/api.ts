@@ -462,6 +462,11 @@ export const setGroupAdmin = async (cid: string, who: string, makeAdmin: boolean
   void (await db.rpc<unknown>('set_group_admin', { cid, who, make_admin: makeAdmin }))
 export const renameGroup = async (cid: string, newTitle: string) =>
   void (await db.rpc<unknown>('rename_group', { cid, new_title: newTitle }))
+export type GroupRules = { only_admins_send: boolean; only_admins_add: boolean; my_role: 'admin' | 'member' }
+export const groupRules = async (cid: string): Promise<GroupRules | null> =>
+  (await db.rpc<GroupRules[]>('group_rules', { cid }))[0] ?? null
+export const setGroupRules = async (cid: string, adminsSend: boolean, adminsAdd: boolean) =>
+  void (await db.rpc<unknown>('set_group_rules', { cid, admins_send: adminsSend, admins_add: adminsAdd }))
 export const leaveGroup = async (cid: string) => void (await db.rpc<unknown>('leave_group', { cid }))
 /** True when everyone who should receive the file has now saved it. */
 export const audioSaved = (mid: string) => db.rpc<boolean>('audio_saved', { mid })

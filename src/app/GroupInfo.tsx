@@ -3,6 +3,9 @@ import {
   ApiError,
   addGroupMembers,
   groupMembers,
+  groupRules,
+  setGroupRules,
+  type GroupRules,
   joinRequestsFor,
   reviewJoinRequest,
   type JoinRequest,
@@ -48,6 +51,7 @@ export function GroupInfo({
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState(false)
   const [requests, setRequests] = useState<JoinRequest[]>([])
+  const [rules, setRules] = useState<GroupRules | null>(null)
 
   const fail = (e: unknown) => setError(e instanceof ApiError ? e.message : 'Something went wrong. Try again.')
 
@@ -55,6 +59,7 @@ export function GroupInfo({
     try {
       setMembers(await groupMembers(chat.id))
       setRequests(await joinRequestsFor(chat.id).catch(() => []))
+      setRules(await groupRules(chat.id).catch(() => null))
       setError('')
     } catch (e) {
       fail(e)
@@ -113,6 +118,7 @@ export function GroupInfo({
 
           {error && <p className="error center">{error}</p>}
 
+          {(iAmAdmin || !rules?.only_admins_add) && (
           <button
             type="button"
             className="row add-row"
@@ -126,6 +132,46 @@ export function GroupInfo({
             </span>
             <span className="row-name">Add people</span>
           </button>
+          )}
+
+          {rules && (
+            <div className="settings-card">
+              <h2 className="section-title flush">Group rules</h2>
+              {iAmAdmin ? (
+                <>
+                  <label className="switch-row">
+                    <input
+                      type="checkbox"
+                      checked={rules.only_admins_send}
+                      disabled={busy}
+                      onChange={(e) => void act(() => setGroupRules(chat.id, e.target.checked, rules.only_admins_add))}
+                    />
+                    <span>
+                      <strong>Only admins can send messages</strong>
+                      <span className="muted" style={{ display: 'block' }}>Everyone else can read, but not write.</span>
+                    </span>
+                  </label>
+                  <label className="switch-row">
+                    <input
+                      type="checkbox"
+                      checked={rules.only_admins_add}
+                      disabled={busy}
+                      onChange={(e) => void act(() => setGroupRules(chat.id, rules.only_admins_send, e.target.checked))}
+                    />
+                    <span>
+                      <strong>Only admins can add people</strong>
+                      <span className="muted" style={{ display: 'block' }}>Members cannot add their friends.</span>
+                    </span>
+                  </label>
+                </>
+              ) : (
+                <ul className="muted delete-list">
+                  <li>{rules.only_admins_send ? 'Only admins can send messages.' : 'Everyone can send messages.'}</li>
+                  <li>{rules.only_admins_add ? 'Only admins can add people.' : 'Everyone can add people.'}</li>
+                </ul>
+              )}
+            </div>
+          )}
 
           {iAmAdmin && requests.length > 0 && (
             <>
