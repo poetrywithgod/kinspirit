@@ -147,6 +147,8 @@ export function CallLayer() {
                   ? 'Waiting for them to come online…'
                   : c.peerAway
                     ? 'They lost connection. Waiting for them to come back…'
+                    : other?.away
+                    ? 'They switched to another app. You cannot hear them until they come back.'
                     : other?.muted
                     ? 'Their mic is off'
                     : other?.speaking
@@ -166,6 +168,7 @@ export function CallLayer() {
                   {p.me ? ' (you)' : ''}
                 </span>
                 {p.host && <span className="role small">Host</span>}
+                {p.away && <span className="role small">In another app</span>}
               </span>
               <span className={`mic-state${p.muted ? ' off' : ''}`} aria-label={p.muted ? 'Muted' : 'Mic on'}>
                 {p.muted ? <MicOffIcon /> : <MicIcon />}

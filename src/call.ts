@@ -15,7 +15,7 @@ import { addLocalAudio } from './library'
 import { EXTENSION, LABEL, RECORDER_TYPES, getRecFormat, resolveRecFormat, type RecFormat } from './recfmt'
 import { canEncodeMp3, startMp3, type Mp3Stream } from './mp3'
 
-export type Row = { id: string; name: string; muted: boolean; speaking: boolean; host: boolean; me: boolean }
+export type Row = { id: string; name: string; muted: boolean; speaking: boolean; host: boolean; me: boolean; away: boolean }
 export type CallState = {
   phase: 'idle' | 'connecting' | 'live'
   dial: 'none' | 'calling' | 'ringing' // the caller is waiting for the other side
@@ -81,6 +81,8 @@ let watchTimer = 0
 let peerSeen = false
 let peerGone = 0
 let wake: WakeLockSentinel | null = null
+let micWanted = false // I want my mic on (not switched off by me)
+const awayIds = new Set<string>() // people who switched to another app (their phone pauses their mic)
 let rejoining = false
 const stopWatch = () => window.clearInterval(watchTimer)
 
@@ -106,6 +108,7 @@ function refresh() {
         speaking: p.isSpeaking,
         host: roleOf(p) === 'host',
         me: p === room!.localParticipant,
+        away: awayIds.has(p.identity),
       }))
       .sort((a, b) => Number(b.me) - Number(a.me) || Number(b.host) - Number(a.host) || a.name.localeCompare(b.name))
     if (people.length > 1) peerSeen = true
@@ -144,6 +147,8 @@ function refresh() {
 }
 
 function cleanup(reason = '') {
+  micWanted = false
+  awayIds.clear()
   window.clearTimeout(refreshTimer)
   window.clearTimeout(peerGone)
   peerGone = 0
@@ -212,10 +217,37 @@ async function holdScreenAwake() {
     /* not allowed right now */
   }
 }
+/** Tell the others I left / came back to the app (phones pause the microphone while an app is in the background). */
+function announceAway(away: boolean) {
+  void room?.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ away })), { reliable: true, topic: 'away' }).catch(() => {})
+}
+
+/** After coming back to the app: if the browser paused or dropped my microphone, switch it on again. */
+async function ensureMic(showNote: boolean) {
+  if (!room || !micWanted || !st.canSpeak || st.phase !== 'live') return
+  const broken = () => {
+    const t = room?.localParticipant.getTrackPublication(Track.Source.Microphone)?.audioTrack
+    return !t || t.isMuted || t.mediaStreamTrack.readyState === 'ended' || t.mediaStreamTrack.muted
+  }
+  await wait(700) // the browser needs a moment to hand the microphone back
+  if (!broken()) return
+  try {
+    await room.localParticipant.setMicrophoneEnabled(false)
+    await room.localParticipant.setMicrophoneEnabled(true)
+    if (showNote) set({ notice: 'Welcome back. Your microphone is on again.' })
+  } catch {
+    set({ notice: 'Your phone stopped the microphone while Kinspirit was in the background. Tap Mute, then the mic again to speak.' })
+  }
+  refresh()
+}
+
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible' || st.phase === 'idle') return
+  if (st.phase === 'idle') return
+  if (document.visibilityState === 'hidden') return announceAway(true)
+  announceAway(false)
   void holdScreenAwake()
   void room?.startAudio().catch(() => {})
+  void ensureMic(true)
   refresh()
 })
 
@@ -270,6 +302,17 @@ async function openRoom(cid: string): Promise<CallPass> {
   r.on(RoomEvent.AudioPlaybackStatusChanged, () => room === r && set({ needsSound: !r.canPlaybackAudio }))
 
   r.on(RoomEvent.DataReceived, (payload, from, _kind, topic) => {
+    if (topic === 'away' && from) {
+      try {
+        const d = JSON.parse(new TextDecoder().decode(payload)) as { away: boolean }
+        if (d.away) awayIds.add(from.identity)
+        else awayIds.delete(from.identity)
+        refresh()
+      } catch {
+        /* ignore bad data */
+      }
+      return
+    }
     if (topic !== 'rec') return
     try {
       const d = JSON.parse(new TextDecoder().decode(payload)) as { on: boolean }
@@ -277,6 +320,9 @@ async function openRoom(cid: string): Promise<CallPass> {
     } catch {
       /* ignore bad data */
     }
+  })
+  r.on(RoomEvent.ParticipantDisconnected, (p) => {
+    awayIds.delete(p.identity)
   })
   r.on(RoomEvent.Disconnected, (reason) => {
     if (room !== r) return
@@ -304,7 +350,10 @@ async function comeBack() {
         room = null
         void old?.disconnect()
         const pass = await openRoom(st.cid)
-        if (wantMic && (pass.role === 'host' || !pass.locked)) await room!.localParticipant.setMicrophoneEnabled(true).catch(() => {})
+        if (wantMic && (pass.role === 'host' || !pass.locked)) {
+          micWanted = true
+          await room!.localParticipant.setMicrophoneEnabled(true).catch(() => {})
+        }
         set({ reconnecting: false, role: pass.role, locked: pass.locked })
         refresh()
         rejoining = false
@@ -343,9 +392,12 @@ export async function joinCall(chat: CallTarget, opts: { caller?: boolean; callI
     set({ phase: 'live', role: pass.role, startedAt: Date.now(), locked: pass.locked })
     void holdScreenAwake()
     if (pass.role === 'host' || !pass.locked) {
+      micWanted = true
       await room!.localParticipant.setMicrophoneEnabled(true).catch(() => {
+        micWanted = false
         set({ notice: 'Microphone is blocked. Allow it in your browser to speak.' })
       })
+      if (micWanted && !st.notice) set({ notice: 'Stay on Kinspirit while you talk. Your phone pauses the microphone if you switch to another app.' })
     } else {
       set({ notice: 'The host has locked microphones.' })
     }
@@ -444,7 +496,9 @@ export const clearCallError = () => set({ error: '', notice: '' })
 export async function toggleMic() {
   if (!room || !st.canSpeak) return
   try {
-    await room.localParticipant.setMicrophoneEnabled(!room.localParticipant.isMicrophoneEnabled)
+    const next = !room.localParticipant.isMicrophoneEnabled
+    micWanted = next
+    await room.localParticipant.setMicrophoneEnabled(next)
   } catch {
     set({ notice: 'Microphone is blocked. Allow it in your browser to speak.' })
   }
@@ -682,7 +736,7 @@ export async function cycleSpeaker() {
     const list = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audiooutput')
     const els = [...audioEls.values()] as (HTMLMediaElement & { setSinkId?: (id: string) => Promise<void> })[]
     if (list.length < 2 || !els.length || !els[0].setSinkId) {
-      return set({ notice: 'Your phone does not let the browser switch speakers. Use the volume keys, or connect a headset.' })
+      return set({ notice: 'This phone does not let a web app choose the speaker. Use the volume keys or a headset. A Kinspirit phone app can add this later.' })
     }
     const at = list.findIndex((d) => d.deviceId === st.speaker)
     const next = list[(at + 1) % list.length]
