@@ -2297,3 +2297,15 @@ button.sender { padding: 0; border: 0; background: none; font: inherit; font-wei
 .call-note.sound-btn { border: 0; color: inherit; font: inherit; text-align: left; width: calc(100% - 28px); background: rgba(255, 255, 255, 0.22); }
 .audio-sheet { display: grid; gap: 8px; max-height: 85vh; overflow-y: auto; }
 .muted.small { font-size: 13px; margin: 0; }
+
+/* ---- forward message sheet ---- */
+.forward-sheet { max-height: 85dvh; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
+.forward-sheet .sheet-input { margin: 6px 4px; width: calc(100% - 8px); }
+.forward-preview { margin: 0 14px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.forward-list { overflow-y: auto; min-height: 120px; max-height: 45dvh; display: flex; flex-direction: column; gap: 2px; }
+.sheet .forward-row { min-height: 56px; }
+.forward-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.forward-check { flex: none; width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--divider); display: flex; align-items: center; justify-content: center; font-size: 14px; color: #fff; }
+.forward-check.on { background: var(--primary); border-color: var(--primary); }
+.forward-sheet .sheet-actions .btn { min-height: 48px; justify-content: center; background: var(--primary); color: var(--on-primary); border-radius: var(--radius-pill); font-size: 16px; }
+.forward-sheet .sheet-actions .cancel { border-radius: var(--radius-pill); }

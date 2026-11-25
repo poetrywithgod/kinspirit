@@ -28,7 +28,8 @@ import { clock, fmtDur } from '../time'
 import { usePolling } from '../usePolling'
 import { Avatar } from './Avatar'
 import type { ChatTarget } from './ChatsTab'
-import { FileIcon, ImageIcon, BackIcon, ChevronDownIcon, ClipIcon, CloseIcon, CopyIcon, EditIcon, MicIcon, PhoneIcon, ReplyIcon, TrashIcon, DownloadIcon, MusicIcon, PauseIcon, PlayIcon, SendIcon } from './icons'
+import { FileIcon, ImageIcon, BackIcon, ChevronDownIcon, ClipIcon, CloseIcon, CopyIcon, EditIcon, MicIcon, PhoneIcon, ReplyIcon, TrashIcon, DownloadIcon, MusicIcon, PauseIcon, PlayIcon, SendIcon, ForwardIcon } from './icons'
+import { ForwardSheet } from './ForwardSheet'
 
 const newId = () =>
   typeof crypto.randomUUID === 'function'
@@ -116,6 +117,8 @@ export function ChatView({
   const [replyTo, setReplyTo] = useState<Message | null>(null)
   const [editing, setEditing] = useState<Message | null>(null)
   const [menu, setMenu] = useState<Message | null>(null)
+  const [forwarding, setForwarding] = useState<Message | null>(null)
+  const [fwdNote, setFwdNote] = useState('')
   const [confirmDelete, setConfirmDelete] = useState<Message | null>(null)
   const [busy, setBusy] = useState(false)
   const [attach, setAttach] = useState(false)
@@ -692,6 +695,14 @@ export function ChatView({
 
       <div className="chat-list" ref={list} onScroll={onScroll}>
         {!loaded && !error && <p className="muted center">Loading…</p>}
+        {fwdNote && (
+          <p className="muted center error-x" role="status">
+            <span>{fwdNote}</span>
+            <button type="button" className="toast-x" aria-label="Close" onClick={() => setFwdNote('')}>
+              <CloseIcon />
+            </button>
+          </p>
+        )}
         {error && (
           <p className="error center error-x">
             <span>{error}</span>
@@ -960,6 +971,17 @@ export function ChatView({
         </div>
       )}
 
+      {forwarding && (
+        <ForwardSheet
+          message={forwarding}
+          fromChat={chat.id}
+          onClose={() => setForwarding(null)}
+          onDone={(t) => {
+            setForwarding(null)
+            setFwdNote(t)
+          }}
+        />
+      )}
       {menu && (
         <div className="sheet-backdrop" role="presentation" onClick={() => setMenu(null)}>
           <div className="sheet" role="menu" onClick={(e) => e.stopPropagation()}>
@@ -983,6 +1005,18 @@ export function ChatView({
             >
               <ReplyIcon /> Reply
             </button>
+            {(menu.kind === 'text' || menu.kind === 'sticker') && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setForwarding(menu)
+                  setMenu(null)
+                }}
+              >
+                <ForwardIcon /> Forward
+              </button>
+            )}
             {menu.kind === 'text' && (
               <button
                 type="button"

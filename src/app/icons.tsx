@@ -261,3 +261,10 @@ export const VideoIcon = () => (
     <path d="M15.5 11l5-3v8l-5-3z" fill="currentColor" />
   </svg>
 )
+
+export const ForwardIcon = () => (
+  <svg {...base}>
+    <path d="M15 7l5 5-5 5" />
+    <path d="M20 12h-9a7 7 0 0 0-7 7v0" />
+  </svg>
+)
