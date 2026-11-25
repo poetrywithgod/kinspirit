@@ -473,7 +473,7 @@ create or replace function public.my_conversations()
 returns table (
   id uuid, kind text, title text, last_message_at timestamptz,
   other_id uuid, other_username text, other_avatar text,
-  last_body text, last_sender uuid, last_sender_name text, unread integer
+  last_body text, last_sender uuid, last_sender_name text, unread integer, mentioned boolean
 )
 language sql
 security definer
@@ -485,7 +485,13 @@ as $$
          coalesce(lm.body, 'Group created'), lm.sender_id, lp.username,
          (select count(*)::integer from public.messages m
            where m.conversation_id = c.id and m.sender_id <> auth.uid() and m.deleted_at is null
-             and coalesce(m.call_status, '') <> 'cancelled' and m.created_at > me.last_read_at)
+             and coalesce(m.call_status, '') <> 'cancelled' and m.created_at > me.last_read_at),
+         -- someone wrote @my_username in a message I have not read yet (groups)
+         (c.kind = 'group' and exists (
+           select 1 from public.messages x
+           where x.conversation_id = c.id and x.sender_id <> auth.uid() and x.deleted_at is null
+             and x.kind = 'text' and x.created_at > me.last_read_at
+             and x.body ~* ('(^|[^a-z0-9_])@' || (select pr.username from public.profiles pr where pr.id = auth.uid()) || '([^a-z0-9_]|$)')))
   from public.conversation_members me
   join public.conversations c on c.id = me.conversation_id
   left join lateral (

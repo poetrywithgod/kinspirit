@@ -32,6 +32,7 @@ import type { ChatTarget } from './ChatsTab'
 import { FileIcon, ImageIcon, BackIcon, ChevronDownIcon, ClipIcon, CloseIcon, CopyIcon, EditIcon, MicIcon, PhoneIcon, ReplyIcon, TrashIcon, DownloadIcon, MusicIcon, PauseIcon, PlayIcon, SendIcon, ForwardIcon, SearchIcon } from './icons'
 import { ForwardSheet } from './ForwardSheet'
 import { ChatSearch } from './ChatSearch'
+import { markChatReadLocally, refreshConversations } from '../unread'
 
 const newId = () =>
   typeof crypto.randomUUID === 'function'
@@ -113,6 +114,16 @@ export function ChatView({
 }) {
   const me = myId()
   const isGroup = chat.kind === 'group'
+  /** Tells the server I read this chat, and clears its counter on the Chats icon at once. */
+  const readChat = async () => {
+    markChatReadLocally(chat.id)
+    try {
+      await markRead(chat.id)
+      refreshConversations()
+    } catch {
+      /* offline: the counter comes back with the next refresh */
+    }
+  }
   const [info, setInfo] = useState(false)
   const [names, setNames] = useState<Map<string, string>>(new Map())
   const [amAdmin, setAmAdmin] = useState(false)
@@ -124,6 +135,8 @@ export function ChatView({
   const [searching, setSearching] = useState(false)
   const [typers, setTypers] = useState<string[]>([])
   const [rules, setRules] = useState<GroupRules | null>(null)
+  const [mentionAt, setMentionAt] = useState<{ start: number; query: string } | null>(null)
+  const box = useRef<HTMLTextAreaElement>(null)
   const lastTyping = useRef(0)
   const [confirmDelete, setConfirmDelete] = useState<Message | null>(null)
   const [busy, setBusy] = useState(false)
@@ -208,7 +221,7 @@ export function ChatView({
         const changed = rows.filter((r) => known.get(r.id)?.updated_at !== r.updated_at)
         if (changed.length) setMessages((cur) => merge(cur, changed))
         if (rows.some((m) => m.sender_id !== me && !known.has(m.id))) {
-          void markRead(chat.id).catch(() => {})
+          void readChat()
           void syncIncomingMedia() // new voice notes and audio are saved to this phone right away
         }
       }
@@ -240,6 +253,49 @@ export function ChatView({
       /* rules not set up yet: everyone can write */
     }
   }, 15000)
+  // @mentions: typing "@" in a group lists the members; the chosen name is written into the message.
+  const mentionOptions =
+    isGroup && mentionAt
+      ? [...people.values()]
+          .filter((p) => p.id !== me && p.username.toLowerCase().startsWith(mentionAt.query.toLowerCase()))
+          .sort((a, b) => a.username.localeCompare(b.username))
+          .slice(0, 6)
+      : []
+  const noteMention = (value: string, caret: number) => {
+    if (!isGroup) return
+    const m = /(^|\s)@([a-zA-Z0-9_]{0,20})$/.exec(value.slice(0, caret))
+    setMentionAt(m ? { start: caret - m[2].length - 1, query: m[2] } : null)
+  }
+  const pickMention = (username: string) => {
+    if (!mentionAt) return
+    const el = box.current
+    const caret = el?.selectionStart ?? text.length
+    const next = `${text.slice(0, mentionAt.start)}@${username} ${text.slice(caret)}`
+    const pos = mentionAt.start + username.length + 2
+    setText(next)
+    setMentionAt(null)
+    window.requestAnimationFrame(() => {
+      el?.focus()
+      el?.setSelectionRange(pos, pos)
+    })
+  }
+  const myName = names.get(me) ?? ''
+  const mentionNames = new Set([...names.values()].map((n) => n.toLowerCase()))
+  /** Message text with @names of group members highlighted (stronger when it is me). */
+  const withMentions = (body: string) => {
+    if (!isGroup || mentionNames.size === 0 || !body.includes('@')) return body
+    return body.split(/(@[a-zA-Z0-9_]{3,20})/g).map((part, i) => {
+      if (part[0] !== '@') return part
+      const n = part.slice(1).toLowerCase()
+      return mentionNames.has(n) ? (
+        <span key={i} className={`mention${n === myName.toLowerCase() ? ' me' : ''}`}>
+          {part}
+        </span>
+      ) : (
+        part
+      )
+    })
+  }
   const readOnly = isGroup && !!rules?.only_admins_send && rules.my_role !== 'admin'
 
   // Typing indicator: ask who is typing every 3 s while this chat is open (off in data saver mode).
@@ -289,7 +345,8 @@ export function ChatView({
   }
 
   useEffect(() => {
-    void markRead(chat.id).catch(() => {})
+    void readChat()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chat.id])
 
   // In groups, learn who is who. Asks again when a message arrives from someone not known yet
@@ -877,7 +934,7 @@ export function ChatView({
                 ) : m.kind === 'sticker' ? (
                   <span className="sticker" aria-label={`Sticker ${m.body}`}>{m.body}</span>
                 ) : (
-                  <span className="bubble-text">{m.body}</span>
+                  <span className="bubble-text">{withMentions(m.body)}</span>
                 )}
                   </>
                 )}
@@ -1211,6 +1268,18 @@ export function ChatView({
           <span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>
         </p>
       )}
+      {mentionOptions.length > 0 && !readOnly && (
+        <ul className="mention-list" role="listbox" aria-label="Mention someone">
+          {mentionOptions.map((p) => (
+            <li key={p.id}>
+              <button type="button" role="option" aria-selected="false" onPointerDown={(e) => e.preventDefault()} onClick={() => pickMention(p.username)}>
+                <Avatar src={p.avatar_url} name={p.username} size={32} />
+                <span>@{p.username}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       {readOnly && (
         <p className="admins-only" role="status">
           Only admins can send messages in this group.
@@ -1286,6 +1355,7 @@ export function ChatView({
           <span aria-hidden="true" style={{ fontSize: '1.4rem', lineHeight: 1 }}>🙂</span>
         </button>
         <textarea
+          ref={box}
           rows={1}
           placeholder="Message"
           aria-label="Message"
@@ -1294,7 +1364,9 @@ export function ChatView({
           onChange={(e) => {
             setText(e.target.value)
             noteTyping(e.target.value)
+            noteMention(e.target.value, e.target.selectionStart)
           }}
+          onClick={(e) => noteMention(e.currentTarget.value, e.currentTarget.selectionStart)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !window.matchMedia('(pointer: coarse)').matches) {
               e.preventDefault()

@@ -1,7 +1,7 @@
 import { startRealtime, stopRealtime } from '../realtime'
 import { useEffect, useRef, useState } from 'react'
 import { refreshBlocks } from '../blocks'
-import { listConversations, markDelivered, myId, profileByUsername, startChat, type Person } from '../api'
+import { ApiError, listConversations, markDelivered, myId, profileByUsername, startChat, type Person } from '../api'
 import { clearInvite, pendingInvite } from '../invite'
 import { ProfileView } from './ProfileView'
 import { resyncPush } from '../push'
@@ -25,6 +25,7 @@ import { SettingsTab } from './SettingsTab'
 import { syncIncomingMedia } from '../mediaSync'
 import { protectStorage } from '../storage'
 import { usePolling } from '../usePolling'
+import { clearConversations, publishConversations, publishConversationsError, setConversationsRefresher, useUnreadTotal } from '../unread'
 import { ChatIcon, GearIcon, MeetingIcon, MusicIcon, PeopleIcon } from './icons'
 
 type Tab = 'chats' | 'meetings' | 'contacts' | 'audio' | 'settings'
@@ -62,6 +63,34 @@ function Shell({
     return stopRealtime
   }, [])
   usePolling(() => markDelivered().catch(() => undefined), 10000)
+
+  // The chat list: one refresh loop for the whole app. It feeds the Chats tab and the unread counter on the Chats icon.
+  const refreshList = useRef<() => Promise<void>>(async () => {})
+  refreshList.current = async () => {
+    try {
+      publishConversations(await listConversations())
+    } catch (e) {
+      publishConversationsError(e instanceof ApiError ? e.message : 'Could not load your chats.')
+    }
+  }
+  usePolling(() => refreshList.current(), 8000, true, false, true)
+  useEffect(() => {
+    setConversationsRefresher(() => void refreshList.current())
+    return () => {
+      setConversationsRefresher(null)
+      clearConversations()
+    }
+  }, [])
+  const unreadTotal = useUnreadTotal()
+  useEffect(() => {
+    // the number on the installed app's icon (where the phone allows it)
+    try {
+      if (unreadTotal > 0) void navigator.setAppBadge?.(unreadTotal)
+      else void navigator.clearAppBadge?.()
+    } catch {
+      /* not supported */
+    }
+  }, [unreadTotal])
   // Someone sent me their profile link: show their profile so I can message them.
   const [invited, setInvited] = useState<Person | null>(null)
   useEffect(() => {
@@ -239,7 +268,14 @@ function Shell({
               setTab(id)
             }}
           >
-            <Icon />
+            <span className="nav-icon">
+              <Icon />
+              {id === 'chats' && unreadTotal > 0 && (
+                <span className="nav-badge" aria-label={`${unreadTotal} unread messages`}>
+                  {unreadTotal > 99 ? '99+' : unreadTotal}
+                </span>
+              )}
+            </span>
             <span>{label}</span>
           </button>
         ))}

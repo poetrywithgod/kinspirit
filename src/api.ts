@@ -247,6 +247,7 @@ export type Conversation = {
   last_sender: string | null
   last_sender_name: string | null
   unread: number
+  mentioned?: boolean // someone wrote @me in an unread message
 }
 
 export type Message = {

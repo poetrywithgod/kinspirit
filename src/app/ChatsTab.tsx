@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { ApiError, generalStatus, listConversations, myId, requestGeneral, type Conversation, type GeneralStatus } from '../api'
+import { ApiError, generalStatus, myId, requestGeneral, type Conversation, type GeneralStatus } from '../api'
+import { useConversationState } from '../unread'
 import { shortWhen } from '../time'
-import { usePolling } from '../usePolling'
 import { Avatar } from './Avatar'
 import { PlusIcon } from './icons'
 
@@ -14,8 +14,6 @@ const FILTERS: { id: Filter; label: string }[] = [
   { id: 'meetings', label: 'Meetings' },
 ]
 
-let cache: Conversation[] | null = null // lets the list appear instantly when coming back from a chat
-
 export function ChatsTab({
   onOpen,
   onFindPeople,
@@ -26,10 +24,11 @@ export function ChatsTab({
   onNewGroup: () => void
 }) {
   const [fab, setFab] = useState(false)
-  const [items, setItems] = useState<Conversation[] | null>(cache)
+  const { rows: items, error: listError } = useConversationState()
   const [filter, setFilter] = useState<Filter>('all')
   const [find, setFind] = useState('')
-  const [error, setError] = useState('')
+  const [actionError, setActionError] = useState('')
+  const error = actionError || listError
   const me = myId()
   const [general, setGeneral] = useState<GeneralStatus | null>(null)
   const [asking, setAsking] = useState(false)
@@ -41,22 +40,11 @@ export function ChatsTab({
     try {
       setGeneral(await requestGeneral())
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Could not send the request.')
+      setActionError(e instanceof ApiError ? e.message : 'Could not send the request.')
     } finally {
       setAsking(false)
     }
   }
-
-  usePolling(async () => {
-    try {
-      const rows = await listConversations()
-      cache = rows
-      setItems(rows)
-      setError('')
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Could not load your chats.')
-    }
-  }, 8000, true, false, true)
 
   const needle = find.trim().toLowerCase()
   const nameOf = (c: Conversation) => (c.kind === 'direct' ? `@${c.other_username ?? 'unknown'}` : (c.title ?? 'Group'))
@@ -160,6 +148,11 @@ export function ChatsTab({
                       {c.last_sender === me ? 'You: ' : c.kind === 'group' && c.last_sender_name ? `@${c.last_sender_name}: ` : ''}
                       {c.last_body}
                     </span>
+                    {c.mentioned && c.unread > 0 && (
+                      <span className="mention-pill" aria-label="You were mentioned">
+                        @
+                      </span>
+                    )}
                     {c.unread > 0 && (
                       <span className="badge" aria-label={`${c.unread} unread`}>
                         {c.unread > 99 ? '99+' : c.unread}

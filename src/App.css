@@ -2348,3 +2348,13 @@ button.sender { padding: 0; border: 0; background: none; font: inherit; font-wei
 
 /* ---- group rules ---- */
 .admins-only { flex: none; margin: 0; padding: 14px 16px calc(14px + env(safe-area-inset-bottom)); text-align: center; font: 600 14px var(--font-body); color: var(--text-muted); background: var(--sheet); border-top: 1px solid var(--divider); }
+
+/* ---- unread counter on the Chats icon, @mentions ---- */
+.nav-icon { position: relative; display: grid; }
+.nav-badge { position: absolute; top: -5px; left: 50%; margin-left: 4px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--primary); color: var(--on-primary); font: 700 11px/18px var(--font-body); text-align: center; box-shadow: 0 0 0 2px var(--bg); }
+.mention-pill { flex: none; min-width: 22px; height: 22px; border-radius: 11px; margin-right: 6px; background: var(--primary); color: var(--on-primary); font: 700 13px/22px var(--font-body); text-align: center; }
+.mention { font-weight: 700; color: var(--accent); }
+.mention.me { background: color-mix(in srgb, var(--primary) 22%, transparent); border-radius: 4px; padding: 0 2px; }
+.mention-list { flex: none; list-style: none; margin: 0; padding: 4px 8px; background: var(--sheet); border-top: 1px solid var(--divider); max-height: 40dvh; overflow-y: auto; }
+.mention-list button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 6px 8px; border: 0; border-radius: 10px; background: transparent; color: var(--text); font: 600 15px var(--font-body); text-align: left; }
+.mention-list button:active { background: var(--divider); }
