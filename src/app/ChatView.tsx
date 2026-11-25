@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { ApiError, MAX_AUDIO_BYTES, MAX_MEDIA_BYTES, audioPath, deleteMessage, editMessage, fetchMessages, markRead, myId, sendAudio, sendMedia, sendMessage, sendVoice, groupMembers, type Message, type Person } from '../api'
+import { ApiError, MAX_AUDIO_BYTES, MAX_MEDIA_BYTES, audioPath, deleteMessage, editMessage, fetchMessages, fetchFrom, markRead, myId, sendAudio, sendMedia, sendMessage, sendVoice, groupMembers, type Message, type Person } from '../api'
 import { AUDIO_ACCEPT, DOCUMENT_ACCEPT, isAudioFile, claimPick, isImage, readable, isVideo, prepareImage, probeVideo, typeOf, type Prepared } from '../media'
 import { keepOwnMedia } from '../mediaStore'
 import { Lightbox } from './Lightbox'
@@ -28,8 +28,9 @@ import { clock, fmtDur } from '../time'
 import { usePolling } from '../usePolling'
 import { Avatar } from './Avatar'
 import type { ChatTarget } from './ChatsTab'
-import { FileIcon, ImageIcon, BackIcon, ChevronDownIcon, ClipIcon, CloseIcon, CopyIcon, EditIcon, MicIcon, PhoneIcon, ReplyIcon, TrashIcon, DownloadIcon, MusicIcon, PauseIcon, PlayIcon, SendIcon, ForwardIcon } from './icons'
+import { FileIcon, ImageIcon, BackIcon, ChevronDownIcon, ClipIcon, CloseIcon, CopyIcon, EditIcon, MicIcon, PhoneIcon, ReplyIcon, TrashIcon, DownloadIcon, MusicIcon, PauseIcon, PlayIcon, SendIcon, ForwardIcon, SearchIcon } from './icons'
 import { ForwardSheet } from './ForwardSheet'
+import { ChatSearch } from './ChatSearch'
 
 const newId = () =>
   typeof crypto.randomUUID === 'function'
@@ -119,6 +120,7 @@ export function ChatView({
   const [menu, setMenu] = useState<Message | null>(null)
   const [forwarding, setForwarding] = useState<Message | null>(null)
   const [fwdNote, setFwdNote] = useState('')
+  const [searching, setSearching] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<Message | null>(null)
   const [busy, setBusy] = useState(false)
   const [attach, setAttach] = useState(false)
@@ -371,6 +373,22 @@ export function ChatView({
   }
 
   const who = (id: string) => (id === me ? 'You' : isGroup ? `@${names.get(id) ?? '…'}` : chat.name)
+
+  // Opens the chat history at a search result: loads everything from that message onwards, then scrolls to it.
+  const openResult = async (m: Message) => {
+    setSearching(false)
+    if (!list.current?.querySelector(`[data-mid="${m.id}"]`)) {
+      try {
+        const rows = await fetchFrom(chat.id, m.created_at)
+        stick.current = false
+        setMessages((cur) => merge(cur, rows.length ? rows : [m]))
+      } catch (e) {
+        setError(e instanceof ApiError ? e.message : 'Could not open that message.')
+        return
+      }
+    }
+    window.setTimeout(() => jumpTo(m.id), 120)
+  }
 
   const jumpTo = (id: string) => {
     const el = list.current?.querySelector<HTMLElement>(`[data-mid="${id}"]`)
@@ -668,6 +686,9 @@ export function ChatView({
             <span className="chat-name">{chat.name}</span>
           </button>
         )}
+        <button type="button" className="icon-btn" aria-label="Search in this chat" aria-expanded={searching} onClick={() => setSearching((v) => !v)}>
+          <SearchIcon />
+        </button>
         <button
           type="button"
           className="icon-btn call-btn"
@@ -678,6 +699,8 @@ export function ChatView({
           <PhoneIcon />
         </button>
       </header>
+
+      {searching && <ChatSearch chatId={chat.id} who={who} onPick={(m) => void openResult(m)} onClose={() => setSearching(false)} />}
 
       {inThisCall ? (
         <button type="button" className="call-strip" onClick={() => showCall(true)}>

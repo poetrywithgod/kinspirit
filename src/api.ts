@@ -269,6 +269,23 @@ export async function fetchMessages(cid: string, after?: string): Promise<Messag
   return rows.reverse()
 }
 
+/** Finds messages in one chat whose text or file name contains `q` (newest first, up to 50). */
+export async function searchMessages(cid: string, q: string): Promise<Message[]> {
+  // characters that mean something inside a PostgREST filter are dropped from the search word
+  const word = q.trim().replace(/[*%,()\\]/g, ' ').replace(/\s+/g, ' ').trim()
+  if (word.length < 2) return []
+  const pat = encodeURIComponent(`*${word}*`)
+  return db.select<Message>(
+    `messages?conversation_id=eq.${cid}&deleted_at=is.null&kind=in.(text,audio,file,image,video)&or=(body.ilike.${pat},file_name.ilike.${pat})&order=created_at.desc&limit=50&select=${MESSAGE_COLUMNS}`,
+  )
+}
+
+/** Everything from one moment onwards (oldest first, up to 500): used to open the history around a search result. */
+export const fetchFrom = (cid: string, iso: string) =>
+  db.select<Message>(
+    `messages?conversation_id=eq.${cid}&created_at=gte.${encodeURIComponent(iso)}&order=created_at.asc&limit=500&select=${MESSAGE_COLUMNS}`,
+  )
+
 /** Sending the same message id twice is safe, so retrying never makes duplicates. */
 export async function sendMessage(m: { id: string; conversation_id: string; body: string; kind?: 'text' | 'call' | 'sticker'; reply_to?: string | null }): Promise<void> {
   const s = currentSession()

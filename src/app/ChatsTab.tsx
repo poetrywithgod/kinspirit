@@ -28,6 +28,7 @@ export function ChatsTab({
   const [fab, setFab] = useState(false)
   const [items, setItems] = useState<Conversation[] | null>(cache)
   const [filter, setFilter] = useState<Filter>('all')
+  const [find, setFind] = useState('')
   const [error, setError] = useState('')
   const me = myId()
   const [general, setGeneral] = useState<GeneralStatus | null>(null)
@@ -57,10 +58,22 @@ export function ChatsTab({
     }
   }, 8000)
 
-  const shown = (items ?? []).filter((c) => (filter === 'all' ? true : filter === 'groups' ? c.kind === 'group' : false))
+  const needle = find.trim().toLowerCase()
+  const nameOf = (c: Conversation) => (c.kind === 'direct' ? `@${c.other_username ?? 'unknown'}` : (c.title ?? 'Group'))
+  const shown = (items ?? [])
+    .filter((c) => (filter === 'all' ? true : filter === 'groups' ? c.kind === 'group' : false))
+    .filter((c) => !needle || nameOf(c).toLowerCase().includes(needle) || (c.last_body ?? '').toLowerCase().includes(needle))
 
   return (
     <section className="tab">
+      <input
+        className="sheet-input chat-find"
+        type="search"
+        placeholder="Search chats"
+        aria-label="Search chats"
+        value={find}
+        onChange={(e) => setFind(e.target.value)}
+      />
       <div className="chips" role="tablist" aria-label="Filter chats">
         {FILTERS.map((f) => (
           <button
@@ -96,7 +109,9 @@ export function ChatsTab({
 
       {items === null && !error && <p className="muted center">Loading…</p>}
 
-      {items !== null && shown.length === 0 && (
+      {items !== null && shown.length === 0 && needle && <p className="muted center">No chats match “{find.trim()}”.</p>}
+
+      {items !== null && shown.length === 0 && !needle && (
         <div className="empty-card">
           <span className="empty-mark" aria-hidden="true" />
           {filter === 'all' ? (
