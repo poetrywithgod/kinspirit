@@ -2330,3 +2330,13 @@ button.sender { padding: 0; border: 0; background: none; font: inherit; font-wei
 .typing-dots i:nth-child(3) { animation-delay: 0.3s; }
 @keyframes typing-bounce { 0%, 60%, 100% { opacity: 0.3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
 @media (prefers-reduced-motion: reduce) { .typing-dots i { animation: none; opacity: 0.6; } }
+
+/* ---- app lock ---- */
+.lock-screen { position: fixed; inset: 0; z-index: 1000; background: var(--brand); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center; }
+.lock-screen > * { position: relative; }
+.lock-screen h1 { margin: 0; font: 600 26px var(--font-heading); }
+.lock-screen p { margin: 0; max-width: 300px; color: var(--mist); font: 400 16px var(--font-body); }
+.lock-logo { width: 64px; height: 68px; margin: 0 0 6px; }
+.lock-msg { color: #fff !important; font-weight: 700 !important; }
+.lock-screen .btn { width: min(280px, 100%); min-height: 52px; margin-top: 8px; }
+.lock-link { background: transparent; border: 0; color: var(--mist); text-decoration: underline; font: 600 15px var(--font-body); padding: 12px; min-height: 44px; }

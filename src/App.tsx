@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ApiError, cacheProfile, cachedProfile, consumeAuthRedirect, currentSession, getMyProfile, signIn, signOut, signUp, type LoginResult } from './api'
 import { AuthLayout } from './AuthLayout'
 import { AppShell } from './app/AppShell'
@@ -8,6 +8,8 @@ import { VerifyEmail } from './screens/VerifyEmail'
 import { VerifyPhone } from './screens/VerifyPhone'
 import { ForgotPassword } from './screens/ForgotPassword'
 import { PasswordField } from './PasswordField'
+import { LockScreen } from './app/LockScreen'
+import { LOCK_AFTER_MS, disableLock, lockEnabledFor } from './appLock'
 import { pendingInvite } from './invite'
 import { COUNTRIES, flag, guessCountry, normalizePhone, type Country } from './phone'
 
@@ -287,7 +289,7 @@ function Login({
   )
 }
 
-export default function App() {
+function AppInner() {
   const [screen, setScreen] = useState<Screen>('welcome')
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
@@ -422,6 +424,7 @@ export default function App() {
             cacheProfile({ username: u, avatar_url: avatar })
           }}
           onLogout={() => {
+            disableLock()
             void signOut().finally(() => {
               setAvatar(null)
               setUsername('')
@@ -431,4 +434,46 @@ export default function App() {
         />
       )
   }
+}
+
+type LockState = 'off' | 'cold' | 'overlay'
+
+/** Wraps the app with the optional fingerprint / face lock (Settings > Security). */
+export default function App() {
+  const [lock, setLock] = useState<LockState>(() => (lockEnabledFor(currentSession()?.user.id) ? 'cold' : 'off'))
+  const [epoch, setEpoch] = useState(0)
+  const hiddenAt = useRef(0)
+
+  // Lock again when the app has been away for a while. The app stays mounted underneath, so a running call is not cut.
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') {
+        hiddenAt.current = Date.now()
+        return
+      }
+      const away = hiddenAt.current ? Date.now() - hiddenAt.current : 0
+      hiddenAt.current = 0
+      if (away >= LOCK_AFTER_MS && lockEnabledFor(currentSession()?.user.id)) setLock((l) => (l === 'off' ? 'overlay' : l))
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [])
+
+  return (
+    <>
+      {lock !== 'cold' && <AppInner key={epoch} />}
+      {lock !== 'off' && (
+        <LockScreen
+          onUnlock={() => setLock('off')}
+          onLogout={() => {
+            disableLock()
+            void signOut().finally(() => {
+              setLock('off')
+              setEpoch((e) => e + 1)
+            })
+          }}
+        />
+      )}
+    </>
+  )
 }

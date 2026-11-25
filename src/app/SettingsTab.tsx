@@ -7,6 +7,7 @@ import { PhotoCropper } from '../PhotoCropper'
 import { applyTheme, getTheme, type ThemePref } from '../theme'
 import { Avatar } from './Avatar'
 import { AccountCard } from './AccountCard'
+import { SecurityCard } from './SecurityCard'
 import { disablePush, enablePush, pushState, testPush, type PushState } from '../push'
 import { profileLink, shareProfile } from '../invite'
 import { setDataSaver, useDataSaver } from '../dataSaver'
@@ -124,6 +125,7 @@ export function SettingsTab({
       </div>
 
       <AccountCard username={username} onUsernameChange={onUsernameChange} />
+      <SecurityCard username={username} />
 
       <div className="settings-card">
         <h2 className="section-title flush">Saved on this phone</h2>
