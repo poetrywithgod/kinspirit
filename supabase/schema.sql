@@ -1193,6 +1193,46 @@ language sql security definer set search_path = public stable as $$
     and not exists (select 1 from public.conversations c where c.id = cid and c.direct_key = 'general');
 $$;
 
+-- Typing indicator: one tiny row per person per chat, refreshed while they type. Closed table: only the functions below touch it.
+create table if not exists public.typing_status (
+  conversation_id uuid not null references public.conversations (id) on delete cascade,
+  user_id         uuid not null references public.profiles (id) on delete cascade,
+  at              timestamptz not null default now(),
+  primary key (conversation_id, user_id)
+);
+alter table public.typing_status enable row level security;
+revoke all on public.typing_status from anon, authenticated;
+
+-- "I am typing" (on = true) or "I stopped / sent" (on = false).
+create or replace function public.set_typing(cid uuid, is_on boolean default true)
+returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_member(cid) then return; end if;
+  if is_on then
+    insert into public.typing_status (conversation_id, user_id, at) values (cid, auth.uid(), now())
+    on conflict (conversation_id, user_id) do update set at = now();
+  else
+    delete from public.typing_status where conversation_id = cid and user_id = auth.uid();
+  end if;
+end;
+$$;
+
+-- Who else is typing in this chat right now (last 6 seconds). Not shown in the big general group.
+create or replace function public.who_typing(cid uuid)
+returns table (username text)
+language sql security definer set search_path = public stable as $$
+  select p.username::text
+  from public.typing_status t
+  join public.profiles p on p.id = t.user_id
+  where public.is_member(cid) and t.conversation_id = cid
+    and t.user_id <> auth.uid() and t.at > now() - interval '6 seconds'
+    and not public.is_blocked_between(auth.uid(), t.user_id)
+    and not exists (select 1 from public.conversations c where c.id = cid and c.direct_key = 'general')
+  order by t.at desc
+  limit 3;
+$$;
+
 -- Open someone's profile from a link like kinspirit.vercel.app/u/username.
 create or replace function public.profile_by_username(u text)
 returns table (id uuid, username text, avatar_url text)
@@ -1221,7 +1261,8 @@ begin
     'react(uuid, text)', 'conversation_reactions(uuid)', 'general_status()', 'request_general()',
     'join_requests_for(uuid)', 'review_join_request(uuid, uuid, boolean)',
     'match_phones(text[])', 'set_discoverable(boolean)', 'my_discoverable()',
-    'mark_delivered()', 'chat_receipts(uuid)', 'profile_by_username(text)'
+    'mark_delivered()', 'chat_receipts(uuid)', 'profile_by_username(text)',
+    'set_typing(uuid, boolean)', 'who_typing(uuid)'
   ] loop
     execute format('revoke all on function public.%s from public', f);
     execute format('grant execute on function public.%s to authenticated', f);

@@ -530,6 +530,8 @@ export const myDiscoverable = () => db.rpc<boolean>('my_discoverable', {})
 export type Receipts = { delivered_at: string | null; read_at: string | null }
 export const chatReceipts = async (cid: string): Promise<Receipts> =>
   (await db.rpc<Receipts[]>('chat_receipts', { cid }))[0] ?? { delivered_at: null, read_at: null }
+export const setTypingRpc = async (cid: string, on: boolean) => void (await db.rpc<unknown>('set_typing', { cid, is_on: on }))
+export const whoTyping = async (cid: string) => (await db.rpc<{ username: string }[]>('who_typing', { cid })).map((r) => r.username)
 export const markDelivered = async () => void (await db.rpc<unknown>('mark_delivered', {}))
 export const profileByUsername = async (u: string): Promise<Person | null> =>
   (await db.rpc<Person[]>('profile_by_username', { u }))[0] ?? null

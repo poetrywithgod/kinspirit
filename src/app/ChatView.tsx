@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { ApiError, MAX_AUDIO_BYTES, MAX_MEDIA_BYTES, audioPath, deleteMessage, editMessage, fetchMessages, fetchFrom, markRead, myId, sendAudio, sendMedia, sendMessage, sendVoice, groupMembers, type Message, type Person } from '../api'
+import { ApiError, MAX_AUDIO_BYTES, MAX_MEDIA_BYTES, audioPath, deleteMessage, editMessage, fetchMessages, fetchFrom, setTypingRpc, whoTyping, markRead, myId, sendAudio, sendMedia, sendMessage, sendVoice, groupMembers, type Message, type Person } from '../api'
 import { AUDIO_ACCEPT, DOCUMENT_ACCEPT, isAudioFile, claimPick, isImage, readable, isVideo, prepareImage, probeVideo, typeOf, type Prepared } from '../media'
 import { keepOwnMedia } from '../mediaStore'
 import { Lightbox } from './Lightbox'
@@ -10,6 +10,7 @@ import { QUICK_REACTIONS, STICKERS } from '../stickers'
 import { chatReceipts, listReactions, reactTo, type Reaction, type Receipts } from '../api'
 import { TicksIcon } from './icons'
 import { useBlocks } from '../blocks'
+import { dataSaver } from '../dataSaver'
 import { downloadAudio, keepOwnAudio, useLibrary } from '../library'
 import { syncIncomingMedia } from '../mediaSync'
 import { currentTrack, play, toggle, usePlayer } from '../player'
@@ -121,6 +122,8 @@ export function ChatView({
   const [forwarding, setForwarding] = useState<Message | null>(null)
   const [fwdNote, setFwdNote] = useState('')
   const [searching, setSearching] = useState(false)
+  const [typers, setTypers] = useState<string[]>([])
+  const lastTyping = useRef(0)
   const [confirmDelete, setConfirmDelete] = useState<Message | null>(null)
   const [busy, setBusy] = useState(false)
   const [attach, setAttach] = useState(false)
@@ -226,6 +229,33 @@ export function ChatView({
     }
   }, 5000)
 
+  // Typing indicator: ask who is typing every 3 s while this chat is open (off in data saver mode).
+  usePolling(async () => {
+    if (dataSaver()) return setTypers((t) => (t.length ? [] : t))
+    try {
+      const names = await whoTyping(chat.id)
+      setTypers((cur) => (cur.join() === names.join() ? cur : names))
+    } catch {
+      /* not set up yet, or offline: show nothing */
+    }
+  }, 3000)
+
+  // Tell the others I am typing (at most every 3 s), and that I stopped when the text is cleared or sent.
+  const noteTyping = (value: string) => {
+    if (dataSaver() || editing) return
+    if (!value.trim()) {
+      if (lastTyping.current) {
+        lastTyping.current = 0
+        void setTypingRpc(chat.id, false).catch(() => undefined)
+      }
+      return
+    }
+    if (Date.now() - lastTyping.current > 3000) {
+      lastTyping.current = Date.now()
+      void setTypingRpc(chat.id, true).catch(() => undefined)
+    }
+  }
+
   const react = (m: Message, emoji: string) => {
     const mine = reactions.find((r) => r.message_id === m.id && r.user_id === me)
     const next = mine?.emoji === emoji ? null : emoji
@@ -327,6 +357,7 @@ export function ChatView({
     stick.current = true
     setMessages((cur) => merge(cur, [m]))
     setText('')
+    noteTyping('')
     setReplyTo(null)
     push(m)
   }
@@ -1160,6 +1191,13 @@ export function ChatView({
           )}
         </div>
       ) : (
+      <>
+      {typers.length > 0 && (
+        <p className="typing-line" role="status">
+          {isGroup ? `${typers.map((t) => '@' + t).join(', ')} ${typers.length > 1 ? 'are' : 'is'} typing` : 'typing'}
+          <span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>
+        </p>
+      )}
       <form
         className="composer"
         onSubmit={(e) => {
@@ -1234,7 +1272,10 @@ export function ChatView({
           aria-label="Message"
           value={text}
           maxLength={4000}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value)
+            noteTyping(e.target.value)
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !window.matchMedia('(pointer: coarse)').matches) {
               e.preventDefault()
@@ -1259,6 +1300,7 @@ export function ChatView({
           </button>
         )}
       </form>
+      </>
       )}
     </div>
   )
