@@ -12,7 +12,7 @@ export const SUPABASE_KEY: string =
 export const WHATSAPP_NUMBER: string = import.meta.env.VITE_KINSPIRIT_WHATSAPP ?? '2347053412256'
 
 /** Digits in the emailed code. Must match Supabase: Authentication > Sign In / Providers > Email > OTP length. */
-export const EMAIL_OTP_LENGTH: number = Number(import.meta.env.VITE_EMAIL_OTP_LENGTH ?? 8)
+export const EMAIL_OTP_LENGTH: number = Number(import.meta.env.VITE_EMAIL_OTP_LENGTH) || 6
 
 /** Public half of the push-notification key pair (made with `npx web-push generate-vapid-keys`). Empty = notifications off. */
 export const VAPID_PUBLIC_KEY: string = import.meta.env.VITE_VAPID_PUBLIC_KEY ?? ''

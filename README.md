@@ -32,7 +32,7 @@ Open the address it prints (usually http://localhost:5173) and use your browser'
    <p>Or tap to confirm instantly: <a href="{{ .ConfirmationURL }}">Confirm my email</a></p>
    ```
 4. **URLs:** Authentication, URL Configuration. Set Site URL to the address the app runs on and add it under Redirect URLs.
-5. **Code length:** the app expects 8-digit email codes (`EMAIL_OTP_LENGTH` in `src/config.ts`). Match the Supabase setting.
+5. **Code length:** the app expects 6-digit email codes (`EMAIL_OTP_LENGTH` in `src/config.ts`). Match the Supabase setting.
 
 ## Settings
 
