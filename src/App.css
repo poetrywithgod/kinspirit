@@ -2358,3 +2358,18 @@ button.sender { padding: 0; border: 0; background: none; font: inherit; font-wei
 .mention-list { flex: none; list-style: none; margin: 0; padding: 4px 8px; background: var(--sheet); border-top: 1px solid var(--divider); max-height: 40dvh; overflow-y: auto; }
 .mention-list button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 6px 8px; border: 0; border-radius: 10px; background: transparent; color: var(--text); font: 600 15px var(--font-body); text-align: left; }
 .mention-list button:active { background: var(--divider); }
+
+/* ---- call video ---- */
+.video-stage { flex: 1 1 0; min-height: 0; display: grid; gap: 6px; padding: 6px 12px; position: relative; }
+.video-stage.n1 { grid-template-columns: 1fr; }
+.video-stage.n2, .video-stage.n3, .video-stage.n4 { grid-template-columns: 1fr 1fr; }
+.video-stage.n3 .video-tile:first-child { grid-column: 1 / -1; }
+.video-tile { position: relative; min-height: 0; overflow: hidden; border-radius: 16px; background: #000; }
+.video-tile video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.video-tile video.mirror { transform: scaleX(-1); }
+.video-name { position: absolute; left: 8px; bottom: 8px; padding: 2px 8px; border-radius: 10px; background: rgba(0, 0, 0, 0.55); color: #fff; font: 600 12px var(--font-body); }
+/* one-to-one: their picture fills the space, mine is a small picture in the corner */
+.video-stage.n2:has(.video-tile.self) { grid-template-columns: 1fr; }
+.video-tile.self { position: absolute; right: 18px; bottom: 14px; width: 28%; max-width: 120px; aspect-ratio: 3 / 4; z-index: 2; border: 2px solid rgba(255, 255, 255, 0.5); }
+.duo-state.compact { text-align: center; margin: 4px 0; }
+.ctl[aria-pressed="true"] svg { background: var(--primary); }

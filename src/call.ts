@@ -7,15 +7,18 @@ import {
   Room,
   RoomEvent,
   Track,
+  VideoPresets,
   type Participant,
   type RemoteTrack,
+  type VideoTrack,
 } from 'livekit-client'
+import { dataSaver } from './dataSaver'
 import { ApiError, type CallPass, answerCall, inviteToCall, callHost, callPass, callRow, callStatus, endCall, startCallRpc } from './api'
 import { addLocalAudio } from './library'
 import { EXTENSION, LABEL, RECORDER_TYPES, getRecFormat, resolveRecFormat, type RecFormat } from './recfmt'
 import { canEncodeMp3, startMp3, type Mp3Stream } from './mp3'
 
-export type Row = { id: string; name: string; muted: boolean; speaking: boolean; host: boolean; me: boolean; away: boolean }
+export type Row = { id: string; name: string; muted: boolean; speaking: boolean; host: boolean; me: boolean; away: boolean; video: boolean }
 export type CallState = {
   phase: 'idle' | 'connecting' | 'live'
   dial: 'none' | 'calling' | 'ringing' // the caller is waiting for the other side
@@ -27,6 +30,7 @@ export type CallState = {
   title: string
   role: 'host' | 'member'
   micOn: boolean
+  camOn: boolean
   canSpeak: boolean
   locked: boolean
   people: Row[]
@@ -53,6 +57,7 @@ const idle: CallState = {
   title: '',
   role: 'member',
   micOn: false,
+  camOn: false,
   canSpeak: true,
   locked: false,
   people: [],
@@ -109,6 +114,7 @@ function refresh() {
         host: roleOf(p) === 'host',
         me: p === room!.localParticipant,
         away: awayIds.has(p.identity),
+        video: p.isCameraEnabled,
       }))
       .sort((a, b) => Number(b.me) - Number(a.me) || Number(b.host) - Number(a.host) || a.name.localeCompare(b.name))
     if (people.length > 1) peerSeen = true
@@ -141,6 +147,7 @@ function refresh() {
       ...(people.length > 1 && st.dial !== 'none' ? { dial: 'none' as const } : {}),
       locked,
       micOn: room.localParticipant.isMicrophoneEnabled,
+      camOn: room.localParticipant.isCameraEnabled,
       canSpeak: room.localParticipant.permissions?.canPublish !== false,
     })
   }, 120)
@@ -263,6 +270,7 @@ async function openRoom(cid: string): Promise<CallPass> {
   room = r
 
   r.on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
+    if (track.kind === Track.Kind.Video) return refresh() // shown by the video tiles on the call screen
     if (track.kind !== Track.Kind.Audio) return
     const el = track.attach()
     el.style.display = 'none'
@@ -271,6 +279,7 @@ async function openRoom(cid: string): Promise<CallPass> {
     mixTrack(track.sid ?? '', track.mediaStreamTrack)
   })
   r.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
+    if (track.kind === Track.Kind.Video) return refresh()
     track.detach().forEach((el) => el.remove())
     audioEls.delete(track.sid ?? '')
     unmixTrack(track.sid ?? '')
@@ -503,6 +512,36 @@ export async function toggleMic() {
     set({ notice: 'Microphone is blocked. Allow it in your browser to speak.' })
   }
   refresh()
+}
+
+/** Camera on/off. Video is kept small on purpose (data is expensive): one low-resolution, low-frame-rate stream. */
+export async function toggleCamera() {
+  if (!room) return
+  const lp = room.localParticipant
+  try {
+    if (lp.isCameraEnabled) {
+      await lp.setCameraEnabled(false)
+    } else {
+      const saver = dataSaver()
+      await lp.setCameraEnabled(
+        true,
+        { resolution: saver ? VideoPresets.h180.resolution : VideoPresets.h360.resolution, facingMode: 'user' },
+        { videoEncoding: { maxBitrate: saver ? 70_000 : 150_000, maxFramerate: saver ? 10 : 15 }, simulcast: false },
+      )
+    }
+  } catch (e) {
+    const denied = e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'SecurityError')
+    set({ notice: denied ? 'The camera is blocked. Allow it in your browser to share video.' : 'Could not start the camera. Check that no other app is using it.' })
+  }
+  refresh()
+}
+
+/** The camera picture of one person in the call (me or someone else), if their camera is on. */
+export function videoTrackOf(identity: string): VideoTrack | undefined {
+  if (!room) return undefined
+  const p = identity === room.localParticipant.identity ? room.localParticipant : room.remoteParticipants.get(identity)
+  const pub = p?.getTrackPublication(Track.Source.Camera)
+  return pub && !pub.isMuted ? (pub.videoTrack as VideoTrack | undefined) : undefined
 }
 
 // ---------- host controls ----------

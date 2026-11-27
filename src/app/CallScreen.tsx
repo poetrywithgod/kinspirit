@@ -12,6 +12,8 @@ import {
   startRecording,
   stopRecording,
   toggleMic,
+  toggleCamera,
+  videoTrackOf,
   useCall,
   type Row,
 } from '../call'
@@ -19,6 +21,7 @@ import { acceptIncoming, declineIncoming, useIncoming } from '../incoming'
 import { listContacts, type Person } from '../api'
 import { fmtDur } from '../time'
 import { Avatar } from './Avatar'
+import { VideoTile } from './VideoTile'
 import { CloseIcon, DotsIcon, DownIcon, HangupIcon, AnswerIcon, LockIcon, MicIcon, MicOffIcon, PhoneIcon, RecordIcon, SpeakerIcon, AddPersonIcon, ScreenShareIcon, VideoIcon } from './icons'
 
 function useElapsed(since: number) {
@@ -88,6 +91,7 @@ export function CallLayer() {
   const isHost = c.role === 'host'
   const other = c.people.find((p) => !p.me)
   const connecting = c.phase === 'connecting'
+  const withVideo = c.people.filter((p) => p.video && videoTrackOf(p.id))
 
   return (
     <div className="call" role="dialog" aria-label="Call">
@@ -106,7 +110,9 @@ export function CallLayer() {
                 : c.dial === 'ringing'
                   ? 'Ringing…'
                   : c.direct
-                    ? 'Voice call'
+                    ? withVideo.length > 0
+                      ? 'Video call'
+                      : 'Voice call'
                     : `${c.people.length} in call · ${fmtDur(secs)}`}
             {c.locked && ' · Mics locked'}
           </p>
@@ -130,7 +136,20 @@ export function CallLayer() {
       )}
       {(soon || c.notice) && <p className="call-note">{soon || c.notice}</p>}
 
-      {c.direct && c.people.length <= 2 ? (
+      {withVideo.length > 0 && (
+        <div className={`video-stage n${Math.min(withVideo.length, 4)}`} aria-label="Video">
+          {withVideo.map((p) => {
+            const t = videoTrackOf(p.id)
+            return t ? <VideoTile key={p.id} track={t} name={p.me ? 'You' : `@${p.name}`} mirror={p.me} className={p.me && c.direct && withVideo.length > 1 ? 'self' : ''} /> : null
+          })}
+        </div>
+      )}
+
+      {c.direct && c.people.length <= 2 && withVideo.length > 0 ? (
+        <p className="duo-state compact" role="status">
+          {c.peerAway ? 'They lost connection. Waiting for them to come back…' : other?.away ? 'They switched to another app.' : fmtDur(secs)}
+        </p>
+      ) : c.direct && c.people.length <= 2 ? (
         <div className="duo">
           <div className={`duo-avatar${other?.speaking ? ' speaking' : ''}${c.dial !== 'none' || connecting ? ' calling' : ''}`}>
             <span className="duo-ring" aria-hidden="true" />
@@ -198,9 +217,9 @@ export function CallLayer() {
             <ScreenShareIcon />
             <span>Share</span>
           </button>
-          <button type="button" className="ctl soon" onClick={() => setSoon('Switching to video is coming soon.')}>
+          <button type="button" className={`ctl${c.camOn ? ' on' : ''}`} aria-pressed={c.camOn} onClick={() => void toggleCamera()}>
             <VideoIcon />
-            <span>Video</span>
+            <span>{c.camOn ? 'Stop video' : 'Video'}</span>
           </button>
           {isHost && (
             <>
