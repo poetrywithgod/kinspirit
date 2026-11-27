@@ -2388,3 +2388,21 @@ button.sender { padding: 0; border: 0; background: none; font: inherit; font-wei
 .btn.wide { width: 100%; margin-top: 12px; }
 select.sheet-input { appearance: auto; }
 .meeting-card .sheet-actions { grid-template-columns: 1fr 1fr; }
+
+/* ---- meeting chat ---- */
+.meeting-chat-wrap { z-index: 80; }
+.meeting-chat { height: min(75vh, 560px); display: flex; flex-direction: column; }
+.meeting-chat-head { display: flex; align-items: center; justify-content: space-between; }
+.meeting-chat-head .sheet-title { flex: 1; }
+.meeting-chat-list { list-style: none; margin: 0; padding: 4px 0; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.mc-msg { display: flex; align-items: flex-end; gap: 8px; max-width: 88%; }
+.mc-msg.mine { align-self: flex-end; flex-direction: row-reverse; }
+.mc-bubble { display: flex; flex-direction: column; background: var(--field); border-radius: 16px; padding: 8px 12px; min-width: 0; }
+.mc-msg.mine .mc-bubble { background: var(--primary); color: var(--on-primary); }
+.mc-name { font: 600 12px var(--font-body); opacity: 0.8; }
+.mc-text { font: 400 15px var(--font-body); overflow-wrap: anywhere; white-space: pre-wrap; }
+.mc-time { font: 400 11px var(--font-body); opacity: 0.65; align-self: flex-end; }
+.meeting-chat-form { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+.meeting-chat-form .send-btn { padding: 12px 16px; flex: none; }
+.chat-ctl { position: relative; }
+.chat-ctl .nav-badge { left: auto; right: 4px; margin: 0; top: -2px; }

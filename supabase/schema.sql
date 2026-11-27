@@ -1483,6 +1483,70 @@ as $$
   update public.meetings set cancelled_at = now() where id = mid and host_id = auth.uid() and cancelled_at is null;
 $$;
 
+-- 15c. Meeting chat ---------------------------------------------------------------------------
+-- Messages written during a meeting. Only people who may be in the meeting can read or write them.
+create table if not exists public.meeting_messages (
+  id         uuid primary key default gen_random_uuid(),
+  meeting_id uuid not null references public.meetings (id) on delete cascade,
+  sender_id  uuid not null references public.profiles (id) on delete cascade,
+  body       text not null check (char_length(body) between 1 and 1000),
+  created_at timestamptz not null default now()
+);
+create index if not exists meeting_messages_idx on public.meeting_messages (meeting_id, created_at);
+alter table public.meeting_messages enable row level security;
+
+create or replace function public.meeting_can_chat(mid uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from public.meetings m
+    where m.id = mid and m.cancelled_at is null and auth.uid() is not null
+      and (m.host_id = auth.uid()
+           or exists (select 1 from public.meeting_invites i where i.meeting_id = m.id and i.user_id = auth.uid())
+           or public.meeting_state(m.id) = 'open')
+  );
+$$;
+
+create or replace function public.send_meeting_message(mid uuid, msg text)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare me uuid := auth.uid(); b text := btrim(coalesce(msg, '')); nid uuid;
+begin
+  if me is null or not public.meeting_can_chat(mid) then raise exception 'meeting_chat_closed'; end if;
+  if char_length(b) < 1 or char_length(b) > 1000 then raise exception 'meeting_chat_empty'; end if;
+  if (select count(*) from public.meeting_messages x where x.sender_id = me and x.created_at > now() - interval '1 minute') >= 20 then
+    raise exception 'meeting_chat_slow';
+  end if;
+  insert into public.meeting_messages (meeting_id, sender_id, body) values (mid, me, b) returning id into nid;
+  return nid;
+end;
+$$;
+
+-- The latest messages (oldest first). Pass the time of the last one you have to get only newer ones.
+create or replace function public.meeting_messages_since(mid uuid, since timestamptz default null)
+returns table (id uuid, sender_id uuid, username text, avatar_url text, body text, created_at timestamptz)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select x.id, x.sender_id, p.username, p.avatar_url, x.body, x.created_at
+  from (
+    select m.* from public.meeting_messages m
+    where m.meeting_id = mid and public.meeting_can_chat(mid) and (since is null or m.created_at >= since)
+    order by m.created_at desc limit 200
+  ) x
+  join public.profiles p on p.id = x.sender_id
+  order by x.created_at;
+$$;
+
 -- 16. Function access (one place, for every function) -----------------------------------------
 -- Only signed-in users may run these.
 do $$
@@ -1490,7 +1554,7 @@ declare f text;
 begin
   foreach f in array array[
     'username_available(text)', 'username_locked_until()',
-    'meeting_state(uuid)', 'create_meeting(text, timestamptz, int, uuid[])', 'my_meetings()', 'meeting_details(uuid)', 'cancel_meeting(uuid)', 'is_member(uuid)',
+    'meeting_state(uuid)', 'meeting_can_chat(uuid)', 'send_meeting_message(uuid, text)', 'meeting_messages_since(uuid, timestamptz)', 'create_meeting(text, timestamptz, int, uuid[])', 'my_meetings()', 'meeting_details(uuid)', 'cancel_meeting(uuid)', 'is_member(uuid)',
     'search_profiles(text)', 'my_contacts()', 'add_contact(uuid)', 'remove_contact(uuid)',
     'start_direct_chat(uuid)', 'my_conversations()', 'mark_read(uuid)',
     'create_group(text, uuid[])', 'group_members(uuid)', 'add_group_members(uuid, uuid[])',

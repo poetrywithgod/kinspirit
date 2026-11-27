@@ -18,12 +18,14 @@ import {
   type Row,
 } from '../call'
 import { acceptIncoming, declineIncoming, useIncoming } from '../incoming'
-import { listContacts, type Person } from '../api'
+import { listContacts, myId, type Person } from '../api'
 import { shareMeeting } from '../invite'
+import { useMeetingChat } from '../meetingChat'
+import { MeetingChatPanel } from './MeetingChatPanel'
 import { fmtDur } from '../time'
 import { Avatar } from './Avatar'
 import { VideoTile } from './VideoTile'
-import { CloseIcon, DotsIcon, DownIcon, HangupIcon, AnswerIcon, LockIcon, MicIcon, MicOffIcon, PhoneIcon, RecordIcon, SpeakerIcon, AddPersonIcon, ScreenShareIcon, VideoIcon } from './icons'
+import { ChatIcon, CloseIcon, DotsIcon, DownIcon, HangupIcon, AnswerIcon, LockIcon, MicIcon, MicOffIcon, PhoneIcon, RecordIcon, SpeakerIcon, AddPersonIcon, ScreenShareIcon, VideoIcon } from './icons'
 
 function useElapsed(since: number) {
   const [now, setNow] = useState(Date.now())
@@ -43,6 +45,8 @@ export function CallLayer() {
   const [soon, setSoon] = useState('')
   const [adding, setAdding] = useState<Person[] | null>(null)
   const [addFilter, setAddFilter] = useState('')
+  const [chatOpen, setChatOpen] = useState(false)
+  const chat = useMeetingChat(c.cid, c.meeting && c.phase === 'live', chatOpen, myId())
   const openAdd = () => {
     setAddFilter('')
     setAdding([])
@@ -204,6 +208,10 @@ export function CallLayer() {
         </ul>
       )}
 
+      {chatOpen && c.meeting && (
+        <MeetingChatPanel title={c.title} messages={chat.messages} me={myId()} onSend={chat.send} onClose={() => setChatOpen(false)} />
+      )}
+
       <footer className="call-dock">
         <div className="dock-grid">
           <button type="button" className="ctl" onClick={() => void cycleSpeaker()}>
@@ -221,6 +229,13 @@ export function CallLayer() {
             <AddPersonIcon />
             <span>{c.meeting ? 'Invite' : 'Add'}</span>
           </button>
+          {c.meeting && (
+            <button type="button" className="ctl chat-ctl" onClick={() => setChatOpen(true)}>
+              <ChatIcon />
+              {chat.unread > 0 && <span className="nav-badge">{chat.unread > 9 ? '9+' : chat.unread}</span>}
+              <span>Chat</span>
+            </button>
+          )}
           <button type="button" className="ctl soon" onClick={() => setSoon('Screen sharing is coming soon.')}>
             <ScreenShareIcon />
             <span>Share</span>

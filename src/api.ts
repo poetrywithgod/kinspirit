@@ -616,3 +616,25 @@ export const myMeetings = () => db.rpc<Meeting[]>('my_meetings', {})
 export const meetingDetails = async (mid: string): Promise<Meeting | null> =>
   (await db.rpc<Meeting[]>('meeting_details', { mid }))[0] ?? null
 export const cancelMeeting = async (mid: string) => void (await db.rpc<unknown>('cancel_meeting', { mid }))
+
+// ---- meeting chat ----
+export type MeetingMessage = { id: string; sender_id: string; username: string; avatar_url: string | null; body: string; created_at: string }
+
+const CHAT_ERRORS: Record<string, string> = {
+  meeting_chat_closed: 'The meeting chat is closed.',
+  meeting_chat_empty: 'Type a message first (up to 1000 letters).',
+  meeting_chat_slow: 'You are sending too fast. Wait a moment.',
+}
+export async function sendMeetingMessage(mid: string, msg: string): Promise<void> {
+  try {
+    await db.rpc<string>('send_meeting_message', { mid, msg })
+  } catch (e) {
+    if (e instanceof ApiError) {
+      const hit = Object.keys(CHAT_ERRORS).find((k) => e.raw.includes(k))
+      if (hit) throw new ApiError(hit, CHAT_ERRORS[hit], e.status)
+    }
+    throw e
+  }
+}
+export const meetingMessagesSince = (mid: string, since?: string) =>
+  db.rpc<MeetingMessage[]>('meeting_messages_since', { mid, since: since ?? null })
