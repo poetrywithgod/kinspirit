@@ -4,6 +4,7 @@ import { refreshBlocks } from '../blocks'
 import { ApiError, listConversations, markDelivered, myId, profileByUsername, startChat, type Person } from '../api'
 import { clearInvite, clearPendingMeeting, pendingInvite, pendingMeeting } from '../invite'
 import { ProfileView } from './ProfileView'
+import { registerChatOpener } from '../openChat'
 import { resyncPush } from '../push'
 import { PushPrompt } from './PushPrompt'
 import { PatternLayer } from '../PatternLayer'
@@ -157,6 +158,14 @@ function Shell({
     navigator.serviceWorker?.addEventListener('message', onMsg)
     return () => navigator.serviceWorker?.removeEventListener('message', onMsg)
   }, [])
+  // Profiles and member lists open chats through here.
+  useEffect(() => {
+    registerChatOpener((c) => {
+      setNewGroup(false)
+      setChat(c)
+    })
+    return () => registerChatOpener(null)
+  }, [])
   const [menu, setMenu] = useState(false)
   const [newGroup, setNewGroup] = useState(false)
   const [focusSearch, setFocusSearch] = useState(false)
@@ -200,7 +209,7 @@ function Shell({
         }}
       />
     )
-  if (chat) return <>{inviteView}<ChatView chat={chat} shared={handOver} onSharedUsed={() => setHandOver(null)} onBack={() => setChat(null)} onRenamed={(name) => setChat({ ...chat, name })} /></>
+  if (chat) return <>{inviteView}<ChatView key={chat.id} chat={chat} shared={handOver} onSharedUsed={() => setHandOver(null)} onBack={() => setChat(null)} onRenamed={(name) => setChat({ ...chat, name })} /></>
   if (newGroup)
     return (
       <NewGroup

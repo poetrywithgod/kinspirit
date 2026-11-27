@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
-import { myId, profileSince, type Person } from '../api'
+import { ApiError, myId, profileSince, type Person } from '../api'
+import { useCall } from '../call'
+import { openDirect } from '../openChat'
 import { PatternLayer } from '../PatternLayer'
 import { Avatar } from './Avatar'
 import { BackIcon } from './icons'
@@ -23,6 +25,8 @@ export function ProfileView({
   const [confirm, setConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const [opening, setOpening] = useState<'' | 'chat' | 'call'>('')
+  const inCall = useCall().phase !== 'idle'
   const { isBlocked } = useBlocks()
   const blocked = isBlocked(person.id)
   const me = myId()
@@ -35,6 +39,19 @@ export function ProfileView({
       dead = true
     }
   }, [person.id])
+
+  const go = async (call: boolean) => {
+    if (opening) return
+    setOpening(call ? 'call' : 'chat')
+    setErr('')
+    try {
+      if (!call && onMessage) onMessage(person)
+      else await openDirect(person, { call })
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : 'Could not open the chat. Try again.')
+    }
+    setOpening('')
+  }
 
   const joined = since ? new Date(since).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }) : ''
   return (
@@ -58,11 +75,23 @@ export function ProfileView({
         <h1 className="profile-name">@{person.username}</h1>
         {!person.avatar_url && <p className="muted">No profile photo yet</p>}
         {joined && <p className="muted">On Kinspirit since {joined}</p>}
-        {onMessage && !blocked && (
-          <button type="button" className="btn profile-action" onClick={() => onMessage(person)}>
-            Send a message
-          </button>
+        {me !== person.id && !blocked && (
+          <div className="profile-actions">
+            <button type="button" className="btn profile-action" disabled={!!opening} onClick={() => void go(false)}>
+              {opening === 'chat' ? 'Opening…' : 'Message'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-quiet profile-action"
+              disabled={!!opening || inCall}
+              title={inCall ? 'You are already in a call' : undefined}
+              onClick={() => void go(true)}
+            >
+              {opening === 'call' ? 'Calling…' : 'Call'}
+            </button>
+          </div>
         )}
+        {inCall && me !== person.id && !blocked && <p className="muted">Finish your current call to call @{person.username}.</p>}
         {me !== person.id && (
           <div className="profile-safety">
             {blocked ? (

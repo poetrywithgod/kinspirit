@@ -880,7 +880,9 @@ export function ChatView({
                     style={{ color: senderColor(m.sender_id) }}
                     onClick={() => {
                       const p = people.get(m.sender_id)
+                      const name = names.get(m.sender_id)
                       if (p) setProfile(p)
+                      else if (name) setProfile({ id: m.sender_id, username: name, avatar_url: null })
                     }}
                   >
                     @{names.get(m.sender_id) ?? '…'}
