@@ -9,6 +9,7 @@ import {
   canShareScreen,
   screenTrack,
   toggleScreenShare,
+  warmRecorder,
   addToCall,
   cycleSpeaker,
   enableSound,
@@ -49,6 +50,11 @@ export function CallLayer() {
   const [adding, setAdding] = useState<Person[] | null>(null)
   const [addFilter, setAddFilter] = useState('')
   const [chatOpen, setChatOpen] = useState(false)
+  const [starting, setStarting] = useState<'audio' | 'screen'>('audio') // which Record button was pressed
+  const hostLive = c.phase === 'live' && c.role === 'host'
+  useEffect(() => {
+    if (hostLive) warmRecorder()
+  }, [hostLive])
   const chat = useMeetingChat(c.cid, c.meeting && c.phase === 'live', chatOpen, myId())
   const openAdd = () => {
     setAddFilter('')
@@ -273,22 +279,30 @@ export function CallLayer() {
             <>
               <button
                 type="button"
-                className={`ctl${c.recording && c.recKind !== 'screen' ? ' on' : ''}`}
-                disabled={c.recording && c.recKind === 'screen'}
-                onClick={() => void (c.recording ? stopRecording() : startRecording('audio'))}
+                className={`ctl${(c.recording && c.recKind !== 'screen') || (c.recStarting && starting === 'audio') ? ' on' : ''}`}
+                disabled={(c.recording && c.recKind === 'screen') || c.recStarting}
+                onClick={() => {
+                  if (c.recording) return void stopRecording()
+                  setStarting('audio')
+                  void startRecording('audio')
+                }}
               >
                 <RecordIcon />
-                <span>{c.recording && c.recKind !== 'screen' ? 'Stop' : 'Record'}</span>
+                <span>{c.recording && c.recKind !== 'screen' ? 'Stop' : c.recStarting && starting === 'audio' ? 'Starting…' : 'Record'}</span>
               </button>
               {canRecordScreen() && (
                 <button
                   type="button"
-                  className={`ctl${c.recording && c.recKind === 'screen' ? ' on' : ''}`}
-                  disabled={c.recording && c.recKind !== 'screen'}
-                  onClick={() => void (c.recording ? stopRecording() : startRecording('screen'))}
+                  className={`ctl${(c.recording && c.recKind === 'screen') || (c.recStarting && starting === 'screen') ? ' on' : ''}`}
+                  disabled={(c.recording && c.recKind !== 'screen') || c.recStarting}
+                  onClick={() => {
+                    if (c.recording) return void stopRecording()
+                    setStarting('screen')
+                    void startRecording('screen')
+                  }}
                 >
                   <RecordIcon />
-                  <span>{c.recording && c.recKind === 'screen' ? 'Stop' : 'Rec screen'}</span>
+                  <span>{c.recording && c.recKind === 'screen' ? 'Stop' : c.recStarting && starting === 'screen' ? 'Starting…' : 'Rec screen'}</span>
                 </button>
               )}
               {!c.direct && (

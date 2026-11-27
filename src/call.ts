@@ -39,6 +39,7 @@ export type CallState = {
   people: Row[]
   startedAt: number
   recording: boolean
+  recStarting: boolean // the Record button was pressed and the recorder is getting ready
   recordingBy: string
   recKind: '' | 'audio' | 'screen'
   speaker: string
@@ -68,6 +69,7 @@ const idle: CallState = {
   people: [],
   startedAt: 0,
   recording: false,
+  recStarting: false,
   recordingBy: '',
   recKind: '',
   speaker: '',
@@ -653,8 +655,23 @@ function announceRecording(on: boolean) {
 export const canRecordScreen = () =>
   typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getDisplayMedia && !/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
 
+/** Loads the MP3 encoder in the background, so pressing Record does not have to wait for it. */
+export function warmRecorder() {
+  void import('@breezystack/lamejs').catch(() => undefined)
+}
+
 export async function startRecording(what: 'audio' | 'screen' = 'audio') {
-  if (!room || st.role !== 'host' || mixer || mp3 || st.recording) return
+  if (!room || st.role !== 'host' || mixer || mp3 || st.recording || st.recStarting) return
+  set({ recStarting: true }) // the button answers at once; the recorder finishes starting behind it
+  try {
+    await startRecordingNow(what)
+  } finally {
+    set({ recStarting: false })
+  }
+}
+
+async function startRecordingNow(what: 'audio' | 'screen') {
+  if (!room) return
   if (typeof MediaRecorder === 'undefined') return set({ notice: 'Recording is not supported on this browser.' })
   kind = what
 
