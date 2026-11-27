@@ -6,6 +6,9 @@ import {
   leaveCall,
   showCall,
   canRecordScreen,
+  canShareScreen,
+  screenTrack,
+  toggleScreenShare,
   addToCall,
   cycleSpeaker,
   enableSound,
@@ -97,6 +100,8 @@ export function CallLayer() {
   const other = c.people.find((p) => !p.me)
   const connecting = c.phase === 'connecting'
   const withVideo = c.people.filter((p) => p.video && videoTrackOf(p.id))
+  const screen = c.people.some((p) => p.sharing) ? screenTrack() : undefined
+  const sharer = screen ? c.people.find((p) => p.id === screen.identity) : undefined
 
   return (
     <div className="call" role="dialog" aria-label="Call">
@@ -140,6 +145,21 @@ export function CallLayer() {
         </button>
       )}
       {(soon || c.notice) && <p className="call-note">{soon || c.notice}</p>}
+
+      {screen && (
+        <div className="screen-stage" aria-label="Shared screen">
+          {sharer?.me ? (
+            <div className="video-tile screen self-share">
+              <p>You are sharing your screen.</p>
+              <button type="button" className="btn" onClick={() => void toggleScreenShare()}>
+                Stop sharing
+              </button>
+            </div>
+          ) : (
+            <VideoTile track={screen.track} name={`@${sharer?.name ?? 'Someone'}'s screen`} className="screen" />
+          )}
+        </div>
+      )}
 
       {withVideo.length > 0 && (
         <div className={`video-stage n${Math.min(withVideo.length, 4)}`} aria-label="Video">
@@ -236,9 +256,14 @@ export function CallLayer() {
               <span>Chat</span>
             </button>
           )}
-          <button type="button" className="ctl soon" onClick={() => setSoon('Screen sharing is coming soon.')}>
+          <button
+            type="button"
+            className={`ctl${c.sharing ? ' on' : ''}${canShareScreen() ? '' : ' soon'}`}
+            aria-pressed={c.sharing}
+            onClick={() => void toggleScreenShare()}
+          >
             <ScreenShareIcon />
-            <span>Share</span>
+            <span>{c.sharing ? 'Stop sharing' : 'Share'}</span>
           </button>
           <button type="button" className={`ctl${c.camOn ? ' on' : ''}`} aria-pressed={c.camOn} onClick={() => void toggleCamera()}>
             <VideoIcon />

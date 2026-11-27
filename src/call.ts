@@ -6,6 +6,7 @@ import {
   DisconnectReason,
   Room,
   RoomEvent,
+  ScreenSharePresets,
   Track,
   VideoPresets,
   type Participant,
@@ -18,7 +19,7 @@ import { addLocalAudio } from './library'
 import { EXTENSION, LABEL, RECORDER_TYPES, getRecFormat, resolveRecFormat, type RecFormat } from './recfmt'
 import { canEncodeMp3, startMp3, type Mp3Stream } from './mp3'
 
-export type Row = { id: string; name: string; muted: boolean; speaking: boolean; host: boolean; me: boolean; away: boolean; video: boolean }
+export type Row = { id: string; name: string; muted: boolean; speaking: boolean; host: boolean; me: boolean; away: boolean; video: boolean; sharing: boolean }
 export type CallState = {
   phase: 'idle' | 'connecting' | 'live'
   dial: 'none' | 'calling' | 'ringing' // the caller is waiting for the other side
@@ -32,6 +33,7 @@ export type CallState = {
   role: 'host' | 'member'
   micOn: boolean
   camOn: boolean
+  sharing: boolean // I am sharing my screen
   canSpeak: boolean
   locked: boolean
   people: Row[]
@@ -60,6 +62,7 @@ const idle: CallState = {
   role: 'member',
   micOn: false,
   camOn: false,
+  sharing: false,
   canSpeak: true,
   locked: false,
   people: [],
@@ -117,6 +120,7 @@ function refresh() {
         me: p === room!.localParticipant,
         away: awayIds.has(p.identity),
         video: p.isCameraEnabled,
+        sharing: p.isScreenShareEnabled,
       }))
       .sort((a, b) => Number(b.me) - Number(a.me) || Number(b.host) - Number(a.host) || a.name.localeCompare(b.name))
     if (people.length > 1) peerSeen = true
@@ -150,6 +154,7 @@ function refresh() {
       locked,
       micOn: room.localParticipant.isMicrophoneEnabled,
       camOn: room.localParticipant.isCameraEnabled,
+      sharing: room.localParticipant.isScreenShareEnabled,
       canSpeak: room.localParticipant.permissions?.canPublish !== false,
     })
   }, 120)
@@ -544,6 +549,49 @@ export function videoTrackOf(identity: string): VideoTrack | undefined {
   const p = identity === room.localParticipant.identity ? room.localParticipant : room.remoteParticipants.get(identity)
   const pub = p?.getTrackPublication(Track.Source.Camera)
   return pub && !pub.isMuted ? (pub.videoTrack as VideoTrack | undefined) : undefined
+}
+
+/** Sharing a screen needs a computer: phone browsers cannot do it (they can still watch). */
+export const canShareScreen = () =>
+  typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getDisplayMedia && !/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+
+/** Starts or stops sharing my screen. One person shares at a time. */
+export async function toggleScreenShare() {
+  if (!room) return
+  const lp = room.localParticipant
+  try {
+    if (lp.isScreenShareEnabled) {
+      await lp.setScreenShareEnabled(false)
+    } else {
+      if (!canShareScreen()) return set({ notice: 'Sharing your screen works from a computer. On a phone you can watch what others share.' })
+      if (st.canSpeak === false) return set({ notice: 'The host has locked sharing for now.' })
+      const other = [...room.remoteParticipants.values()].find((p) => p.isScreenShareEnabled)
+      if (other) return set({ notice: `${other.name || 'Someone'} is already sharing their screen.` })
+      const saver = dataSaver()
+      await lp.setScreenShareEnabled(
+        true,
+        { audio: false, contentHint: 'detail', resolution: (saver ? ScreenSharePresets.h720fps5 : ScreenSharePresets.h720fps15).resolution },
+        { screenShareEncoding: (saver ? ScreenSharePresets.h720fps5 : ScreenSharePresets.h720fps15).encoding, simulcast: false },
+      )
+    }
+  } catch (e) {
+    const denied = e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'SecurityError')
+    // Closing the browser's own "choose a screen" box counts as changing your mind, not as an error.
+    if (!denied) set({ notice: 'Could not share your screen. Try again.' })
+  }
+  refresh()
+}
+
+/** The shared screen of whoever is sharing right now (me or someone else). */
+export function screenTrack(): { track: VideoTrack; identity: string } | undefined {
+  if (!room) return undefined
+  const all: Participant[] = [room.localParticipant, ...room.remoteParticipants.values()]
+  for (const p of all) {
+    const pub = p.getTrackPublication(Track.Source.ScreenShare)
+    const t = pub && !pub.isMuted ? (pub.videoTrack as VideoTrack | undefined) : undefined
+    if (t) return { track: t, identity: p.identity }
+  }
+  return undefined
 }
 
 // ---------- host controls ----------
