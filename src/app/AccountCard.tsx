@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ApiError, USERNAME_RE, changePassword, changeUsername, deleteAccount, isUsernameAvailable } from '../api'
+import { ApiError, USERNAME_RE, changePassword, changeUsername, deleteAccount, isUsernameAvailable, usernameLockedUntil } from '../api'
 import { signOutLocal } from '../supabase'
 import { disableLock } from '../appLock'
 import { PasswordField } from '../PasswordField'
@@ -14,6 +14,8 @@ export function AccountCard({ username, onUsernameChange }: { username: string; 
 
   // username form
   const [name, setName] = useState('')
+  const [lockedUntil, setLockedUntil] = useState<Date | null>(null)
+  const [sure, setSure] = useState(false) // second step: "this locks it for 30 days"
   const [avail, setAvail] = useState<'idle' | 'checking' | 'ok' | 'taken'>('idle')
   // password form
   const [cur, setCur] = useState('')
@@ -31,6 +33,7 @@ export function AccountCard({ username, onUsernameChange }: { username: string; 
     setTyped('')
     setDelPw('')
     setAvail('idle')
+    setSure(false)
   }
 
   const candidate = name.trim().toLowerCase()
@@ -56,13 +59,14 @@ export function AccountCard({ username, onUsernameChange }: { username: string; 
 
   const saveName = async () => {
     if (candidate === username) return close()
+    if (!sure) return setSure(true)
     setBusy(true)
     setError('')
     try {
       const saved = await changeUsername(candidate)
       onUsernameChange(saved)
       close()
-      setMsg(`Your username is now @${saved}. Your old profile link no longer works, so share the new one below.`)
+      setMsg(`Your username is now @${saved}. You can change it again in 30 days. Your old profile link no longer works, so share the new one below.`)
     } catch (e) {
       fail(e)
     }
@@ -120,6 +124,8 @@ export function AccountCard({ username, onUsernameChange }: { username: string; 
             onClick={() => {
               setMsg('')
               setName(username)
+              setLockedUntil(null)
+              void usernameLockedUntil().then(setLockedUntil).catch(() => undefined)
               setOpen('username')
             }}
           >
@@ -210,6 +216,7 @@ export function AccountCard({ username, onUsernameChange }: { username: string; 
             value={name}
             onChange={(e) => {
               setName(e.target.value.replace(/^@/, ''))
+              setSure(false)
               setError('')
             }}
           />
@@ -222,15 +229,25 @@ export function AccountCard({ username, onUsernameChange }: { username: string; 
                   ? 'That username is taken.'
                   : avail === 'ok'
                     ? 'Available.'
-                    : 'You can change your username once every 7 days. Your profile link changes too.'}
+                    : 'Letters, numbers and underscore.'}
           </p>
+          <p className={lockedUntil ? 'error' : 'muted'}>
+            {lockedUntil
+              ? `You changed your username recently. You can change it again on ${lockedUntil.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}.`
+              : 'You can change your username only once every 30 days. Your profile link changes too, and friends who have the old link will need the new one.'}
+          </p>
+          {sure && !lockedUntil && (
+            <p className="error" role="alert">
+              Change to @{candidate}? After this you cannot change it again for 30 days. Tap Yes, change it to confirm.
+            </p>
+          )}
           {error && <p className="error">{error}</p>}
           <div className="sheet-actions">
             <button type="button" className="btn btn-quiet" onClick={close} disabled={busy}>
               Cancel
             </button>
-            <button type="submit" className="btn" disabled={busy || !USERNAME_RE.test(candidate) || avail === 'taken'}>
-              {busy ? 'Saving…' : 'Save'}
+            <button type="submit" className="btn" disabled={busy || !!lockedUntil || !USERNAME_RE.test(candidate) || avail === 'taken'}>
+              {busy ? 'Saving…' : sure ? 'Yes, change it' : 'Save'}
             </button>
           </div>
         </form>

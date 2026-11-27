@@ -48,7 +48,7 @@ revoke insert, update on public.profiles from authenticated;
 grant insert (id, username, phone, avatar_url) on public.profiles to authenticated;
 grant update (id, username, phone, avatar_url) on public.profiles to authenticated;
 
--- Usernames can be changed, but only once every 7 days (and never to a reserved name).
+-- Usernames can be changed, but only once every 30 days (and never to a reserved name).
 alter table public.profiles add column if not exists username_changed_at timestamptz;
 
 create or replace function public.guard_username_change()
@@ -60,7 +60,7 @@ begin
     if lower(new.username) = any (array['admin','kinspirit','support','help','root']) then
       raise exception 'username_reserved';
     end if;
-    if old.username_changed_at is not null and old.username_changed_at > now() - interval '7 days' then
+    if old.username_changed_at is not null and old.username_changed_at > now() - interval '30 days' then
       raise exception 'username_recently_changed';
     end if;
     new.username_changed_at := now();
@@ -68,6 +68,30 @@ begin
   return new;
 end;
 $$;
+
+-- When can I change my username again? Null means: now.
+create or replace function public.username_locked_until()
+returns timestamptz
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select case when username_changed_at > now() - interval '30 days'
+              then username_changed_at + interval '30 days' end
+  from public.profiles where id = auth.uid();
+$$;
+
+-- One-time reset (runs once, however often this file is re-run): everybody starts the new 30-day rule fresh.
+create table if not exists public.schema_flags (name text primary key, done_at timestamptz not null default now());
+alter table public.schema_flags enable row level security;
+do $$
+begin
+  if not exists (select 1 from public.schema_flags where name = 'username_reset_30d') then
+    update public.profiles set username_changed_at = null where username_changed_at is not null;
+    insert into public.schema_flags (name) values ('username_reset_30d');
+  end if;
+end $$;
 
 drop trigger if exists profiles_guard_username on public.profiles;
 create trigger profiles_guard_username
@@ -1347,7 +1371,7 @@ do $$
 declare f text;
 begin
   foreach f in array array[
-    'username_available(text)', 'is_member(uuid)',
+    'username_available(text)', 'username_locked_until()', 'is_member(uuid)',
     'search_profiles(text)', 'my_contacts()', 'add_contact(uuid)', 'remove_contact(uuid)',
     'start_direct_chat(uuid)', 'my_conversations()', 'mark_read(uuid)',
     'create_group(text, uuid[])', 'group_members(uuid)', 'add_group_members(uuid, uuid[])',

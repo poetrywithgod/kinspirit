@@ -1,4 +1,5 @@
 import { dataSaver } from './dataSaver'
+import { loadImage } from './imageLoad'
 // Helpers for photos, videos and files: what kind something is, shrinking big photos, and file names and types.
 export type MediaKind = 'image' | 'video' | 'file'
 
@@ -56,7 +57,7 @@ export type Prepared = { blob: Blob; name: string; type: string; width?: number;
 
 const loadBitmap = async (f: Blob) => {
   try {
-    return await createImageBitmap(f, { imageOrientation: 'from-image' })
+    return await loadImage(f)
   } catch {
     return null
   }
@@ -78,7 +79,7 @@ export async function prepareImage(file: File): Promise<Prepared> {
   const canvas = document.createElement('canvas')
   canvas.width = w
   canvas.height = h
-  canvas.getContext('2d')?.drawImage(bmp, 0, 0, w, h)
+  canvas.getContext('2d')?.drawImage(bmp.source, 0, 0, w, h)
   bmp.close()
   const out = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', saver ? 0.7 : 0.82))
   if (!out || out.size >= file.size) return base

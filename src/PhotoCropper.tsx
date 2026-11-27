@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { loadImage } from './imageLoad'
 
 const OUT = 512 // saved photo is 512 x 512 px: small to upload, sharp on screen
 const MAX_WORK = 1600
 const MAX_ZOOM = 4
 
 async function loadWork(file: File): Promise<HTMLCanvasElement> {
-  const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' })
+  const bmp = await loadImage(file)
   const k = Math.min(1, MAX_WORK / Math.max(bmp.width, bmp.height))
   const c = document.createElement('canvas')
   c.width = Math.round(bmp.width * k)
   c.height = Math.round(bmp.height * k)
-  c.getContext('2d')!.drawImage(bmp, 0, 0, c.width, c.height)
+  c.getContext('2d')!.drawImage(bmp.source, 0, 0, c.width, c.height)
   bmp.close()
   return c
 }
@@ -76,7 +77,7 @@ export function PhotoCropper({
     let dead = false
     loadWork(file)
       .then((c) => !dead && setWork(c))
-      .catch(() => !dead && onCancel('We could not read that picture. Try a JPG or PNG.'))
+      .catch(() => !dead && onCancel('We could not read that picture. Try another photo, or a JPG or PNG.'))
     return () => {
       dead = true
     }

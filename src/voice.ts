@@ -40,8 +40,27 @@ export async function saveReceivedVoice(m: Message): Promise<Blob> {
   return blob
 }
 
+// iPhones only allow sound that starts inside a tap. The note is downloaded after the tap, so the
+// player is "unlocked" first with a silent clip; after that it may play whenever the download ends.
+const SILENT = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA='
+let unlocked = false
+function unlock(a: HTMLAudioElement) {
+  if (unlocked) return
+  if (a.src) {
+    unlocked = true // it has played before, so it is already allowed
+    return
+  }
+  a.src = SILENT
+  unlocked = true
+  // The clip is empty and ends by itself. If the browser refuses, try again on the next tap.
+  a.play().catch((e: unknown) => {
+    if (e instanceof DOMException && e.name === 'NotAllowedError') unlocked = false
+  })
+}
+
 export async function playVoice(m: Message) {
   const a = audio()
+  unlock(a)
   if (st.id === m.id && a.src) {
     if (a.paused) {
       void toggleMusic(false)

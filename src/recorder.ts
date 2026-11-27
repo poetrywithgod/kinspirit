@@ -8,7 +8,8 @@ export type Recording = {
   level: () => number
 }
 
-const TYPES = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg;codecs=opus']
+// AAC (mp4) first: iPhones cannot all play WebM, while every phone plays AAC.
+const TYPES = ['audio/mp4;codecs=mp4a.40.2', 'audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']
 
 /** Starts the microphone. Voice is recorded at a low bit rate to save data. */
 export async function startRecording(): Promise<Recording> {

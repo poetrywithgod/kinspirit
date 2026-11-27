@@ -43,7 +43,7 @@ describe('talking to the server', () => {
     expect(calls).toHaveLength(0)
   })
 
-  it('changeUsername explains the 7-day limit', async () => {
+  it('changeUsername explains the 30-day limit', async () => {
     calls = []
     vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
       calls.push({ url: String(url), init })

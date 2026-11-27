@@ -116,7 +116,13 @@ export async function deleteAccount(password: string): Promise<void> {
 
 export const USERNAME_RE = /^[a-z0-9_]{3,20}$/
 
-/** Changes my username (once every 7 days, enforced by the server). Returns the saved name. */
+/** Changes my username (once every 30 days, enforced by the server). Returns the saved name. */
+/** When I may change my username again (null = right now). */
+export async function usernameLockedUntil(): Promise<Date | null> {
+  const v = await db.rpc<string | null>('username_locked_until', {})
+  return v ? new Date(v) : null
+}
+
 export async function changeUsername(raw: string): Promise<string> {
   const s = currentSession()
   if (!s) throw new ApiError('no_session', 'Please log in again.')
@@ -128,7 +134,7 @@ export async function changeUsername(raw: string): Promise<string> {
   } catch (e) {
     if (e instanceof ApiError) {
       if (/username_recently_changed/.test(e.raw)) {
-        throw new ApiError('username_recent', 'You can change your username once every 7 days. Try again later.', e.status)
+        throw new ApiError('username_recent', 'You can change your username once every 30 days. Try again later.', e.status)
       }
       if (e.code === '23505') throw new ApiError('username_taken', 'That username was just taken. Try another.', 409)
     }
