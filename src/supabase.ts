@@ -4,10 +4,12 @@ import { SUPABASE_KEY, SUPABASE_URL } from './config'
 export class ApiError extends Error {
   code: string
   status: number
-  constructor(code: string, message: string, status = 0) {
+  raw: string // the server's own text, before it is made friendly
+  constructor(code: string, message: string, status = 0, raw = message) {
     super(message)
     this.code = code
     this.status = status
+    this.raw = raw
   }
 }
 
@@ -169,7 +171,7 @@ async function call<T>(path: string, o: Opts = {}): Promise<T> {
   if (!res.ok) {
     const code = String(data.error_code ?? data.code ?? data.error ?? `http_${res.status}`)
     const msg = String(data.msg ?? data.message ?? data.error_description ?? data.error ?? 'Something went wrong.')
-    throw new ApiError(code, FRIENDLY[code] ?? msg, res.status)
+    throw new ApiError(code, FRIENDLY[code] ?? msg, res.status, msg)
   }
   return data as T
 }

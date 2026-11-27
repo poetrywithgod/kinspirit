@@ -127,7 +127,7 @@ export async function changeUsername(raw: string): Promise<string> {
     await db.update('profiles', s.user.id, { username: name })
   } catch (e) {
     if (e instanceof ApiError) {
-      if (/username_recently_changed/.test(e.message)) {
+      if (/username_recently_changed/.test(e.raw)) {
         throw new ApiError('username_recent', 'You can change your username once every 7 days. Try again later.', e.status)
       }
       if (e.code === '23505') throw new ApiError('username_taken', 'That username was just taken. Try another.', 409)

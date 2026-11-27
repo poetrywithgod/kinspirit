@@ -44,7 +44,8 @@ export const refreshConversations = () => refresher?.()
 export const useConversationState = (): State => useSyncExternalStore(subscribe, () => state)
 
 let lastTotal = 0
-const totalOf = () => {
+/** All unread messages across my chats. */
+export const totalOf = () => {
   const rows = state.rows
   if (!rows) return lastTotal
   lastTotal = rows.reduce((n, c) => n + Math.max(0, c.unread), 0)
