@@ -146,6 +146,17 @@ function Shell({
   usePolling(() => syncIncomingMedia(), 15000)
   usePolling(() => pollIncoming(), 3000, true, true)
   const [tab, setTab] = useState<Tab>(() => (pendingMeeting() ? 'meetings' : 'chats'))
+  // Tapping a meeting reminder opens that meeting.
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      if (e.data?.type !== 'open-meeting') return
+      setChat(null)
+      setTab('meetings')
+      setMeetingLink(String(e.data.mid))
+    }
+    navigator.serviceWorker?.addEventListener('message', onMsg)
+    return () => navigator.serviceWorker?.removeEventListener('message', onMsg)
+  }, [])
   const [menu, setMenu] = useState(false)
   const [newGroup, setNewGroup] = useState(false)
   const [focusSearch, setFocusSearch] = useState(false)

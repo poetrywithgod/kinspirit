@@ -71,6 +71,37 @@ Deno.serve(async (req) => {
     const secret = Deno.env.get('PUSH_SECRET')
     if (!secret || req.headers.get('x-push-secret') !== secret) return json({ ok: false, step: 'secret', message: 'wrong secret' }, 401)
 
+    // ---- Meeting invitation or reminder: sent by the database ----
+    if (body.kind === 'meeting_invite' || body.kind === 'meeting_reminder') {
+      const { data: mt } = await sb
+        .from('meetings')
+        .select('id, title, starts_at, host_id, cancelled_at')
+        .eq('id', body.meeting_id)
+        .maybeSingle()
+      if (!mt || mt.cancelled_at) return json({ ok: true, step: 'skip' })
+      const [{ data: host }, { data: inv }, { data: blockers }] = await Promise.all([
+        sb.from('profiles').select('username').eq('id', mt.host_id).maybeSingle(),
+        sb.from('meeting_invites').select('user_id').eq('meeting_id', mt.id),
+        sb.from('blocks').select('blocker').eq('blocked', mt.host_id),
+      ])
+      const blocked = new Set((blockers ?? []).map((b) => b.blocker))
+      const ids = (inv ?? []).map((x) => x.user_id).filter((id) => !blocked.has(id))
+      if (body.kind === 'meeting_reminder') ids.push(mt.host_id)
+      if (!ids.length) return json({ ok: true, step: 'nobody' })
+      const { data: subs } = await sb.from('push_subscriptions').select('endpoint, p256dh, auth').in('user_id', ids)
+      if (!subs?.length) return json({ ok: true, step: 'no-devices' })
+      const mins = Math.max(0, Math.round((new Date(mt.starts_at).getTime() - Date.now()) / 60000))
+      // Everyone is in a different time zone, so say how far away it is instead of a clock time.
+      const away = (m: number) => (m < 1 ? 'now' : m < 60 ? `in ${m} min` : m < 2880 ? `in ${Math.round(m / 60)} h` : `on ${new Date(mt.starts_at).toISOString().slice(0, 10)}`)
+      const payload = JSON.stringify({
+        title: body.kind === 'meeting_invite' ? `@${host?.username ?? 'Someone'} invited you to a meeting` : `Meeting starting ${away(mins)}`,
+        body: body.kind === 'meeting_invite' ? `${mt.title} · starts ${away(mins)}` : mt.title,
+        meeting: mt.id,
+      })
+      const r = await sendAll(sb, subs, payload, body.kind === 'meeting_reminder')
+      return json({ ok: true, step: 'sent', devices: subs.length, ...r })
+    }
+
     const { data: m, error: mErr } = await sb
       .from('messages')
       .select('id, conversation_id, sender_id, kind, body, file_name, deleted_at')

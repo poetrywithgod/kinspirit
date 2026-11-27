@@ -765,6 +765,7 @@ create table if not exists public.meetings (
 );
 create index if not exists meetings_host_idx on public.meetings (host_id, starts_at);
 alter table public.meetings enable row level security;
+alter table public.meetings add column if not exists reminded_at timestamptz;
 
 create table if not exists public.meeting_invites (
   meeting_id uuid not null references public.meetings (id) on delete cascade,
@@ -1412,6 +1413,65 @@ end;
 $$;
 
 -- 15b. Meeting functions -------------------------------------------------------------------
+-- Tell the send-push function about a meeting event ('meeting_invite' or 'meeting_reminder').
+-- A failure here never blocks anything.
+create or replace function public.ping_meeting(kind text, mid uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare cfg record;
+begin
+  select url, secret into cfg from public.push_config where id = 1;
+  if cfg.url is null or cfg.secret is null then return; end if;
+  begin
+    perform net.http_post(
+      url := cfg.url,
+      headers := jsonb_build_object('Content-Type', 'application/json', 'x-push-secret', cfg.secret),
+      body := jsonb_build_object('kind', kind, 'meeting_id', mid),
+      timeout_milliseconds := 3000
+    );
+  exception when others then null;
+  end;
+end;
+$$;
+revoke all on function public.ping_meeting(text, uuid) from public, anon, authenticated;
+
+-- Runs every minute: a meeting that starts within 10 minutes gets one reminder.
+create or replace function public.send_meeting_reminders()
+returns int
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare r record; n int := 0;
+begin
+  for r in
+    update public.meetings m set reminded_at = now()
+     where m.cancelled_at is null and m.reminded_at is null
+       and m.starts_at > now() - interval '5 minutes' and m.starts_at <= now() + interval '10 minutes'
+       and m.created_at < m.starts_at - interval '11 minutes' -- not for meetings made on the spot
+    returning m.id
+  loop
+    perform public.ping_meeting('meeting_reminder', r.id);
+    n := n + 1;
+  end loop;
+  return n;
+end;
+$$;
+revoke all on function public.send_meeting_reminders() from public, anon, authenticated;
+
+-- Check every minute. (Needs the pg_cron extension; if it cannot be switched on here, enable it under
+-- Database -> Extensions and run this block again. Without it, invitations still notify but reminders do not.)
+do $$
+begin
+  create extension if not exists pg_cron;
+  perform cron.schedule('kinspirit-meeting-reminders', '* * * * *', 'select public.send_meeting_reminders()');
+exception when others then
+  raise notice 'Meeting reminders are not scheduled: %', sqlerrm;
+end $$;
+
 create or replace function public.create_meeting(t text, starts timestamptz, mins int, invitees uuid[] default '{}')
 returns uuid
 language plpgsql
@@ -1436,6 +1496,9 @@ begin
       insert into public.meeting_invites (meeting_id, user_id) values (mid, u) on conflict do nothing;
     end if;
   end loop;
+  if exists (select 1 from public.meeting_invites i where i.meeting_id = mid) then
+    perform public.ping_meeting('meeting_invite', mid);
+  end if;
   return mid;
 end;
 $$;

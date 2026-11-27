@@ -49,15 +49,15 @@ self.addEventListener('push', (event) => {
       const ios = /iPhone|iPad|iPod/.test(self.navigator.userAgent)
       const open = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
       // The open app already shows new messages itself. iPhones insist every push is shown.
-      if (!d.test && !ios && open.some((c) => c.visibilityState === 'visible' && c.focused)) return
+      if (!d.test && !d.meeting && !ios && open.some((c) => c.visibilityState === 'visible' && c.focused)) return
       await self.registration.showNotification(d.title || 'Kinspirit', {
         body: d.body || '',
-        tag: d.cid || 'kinspirit',
+        tag: d.meeting || d.cid || 'kinspirit',
         renotify: true,
         icon: '/icon-192.png',
         badge: '/icon-192.png',
         requireInteraction: d.call === true,
-        data: { cid: d.cid },
+        data: { cid: d.cid, meeting: d.meeting },
       })
     })(),
   )
@@ -66,16 +66,18 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
   const cid = event.notification.data && event.notification.data.cid
+  const meeting = event.notification.data && event.notification.data.meeting
   event.waitUntil(
     (async () => {
       const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
       if (all.length) {
         const c = all[0]
         await c.focus()
-        if (cid) c.postMessage({ type: 'open-chat', cid })
+        if (meeting) c.postMessage({ type: 'open-meeting', mid: meeting })
+        else if (cid) c.postMessage({ type: 'open-chat', cid })
         return
       }
-      await self.clients.openWindow(cid ? '/?chat=' + cid : '/')
+      await self.clients.openWindow(meeting ? '/m/' + meeting : cid ? '/?chat=' + cid : '/')
     })(),
   )
 })
