@@ -2,7 +2,7 @@ import { startRealtime, stopRealtime } from '../realtime'
 import { useEffect, useRef, useState } from 'react'
 import { refreshBlocks } from '../blocks'
 import { ApiError, listConversations, markDelivered, myId, profileByUsername, startChat, type Person } from '../api'
-import { clearInvite, pendingInvite } from '../invite'
+import { clearInvite, clearPendingMeeting, pendingInvite, pendingMeeting } from '../invite'
 import { ProfileView } from './ProfileView'
 import { resyncPush } from '../push'
 import { PushPrompt } from './PushPrompt'
@@ -101,6 +101,12 @@ function Shell({
       .then((p) => p && p.id !== myId() && setInvited(p))
       .catch(() => undefined)
   }, [])
+  // Someone sent me a meeting link: open the Meetings tab on it.
+  const [meetingLink, setMeetingLink] = useState<string | null>(() => pendingMeeting())
+  useEffect(() => {
+    if (!meetingLink) return
+    clearPendingMeeting()
+  }, [meetingLink])
   // A page refresh should not end a call: go back into it.
   useEffect(() => {
     void resumeCall()
@@ -139,7 +145,7 @@ function Shell({
   }, [])
   usePolling(() => syncIncomingMedia(), 15000)
   usePolling(() => pollIncoming(), 3000, true, true)
-  const [tab, setTab] = useState<Tab>('chats')
+  const [tab, setTab] = useState<Tab>(() => (pendingMeeting() ? 'meetings' : 'chats'))
   const [menu, setMenu] = useState(false)
   const [newGroup, setNewGroup] = useState(false)
   const [focusSearch, setFocusSearch] = useState(false)
@@ -249,7 +255,7 @@ function Shell({
             }}
           />
         )}
-        {tab === 'meetings' && <MeetingsTab />}
+        {tab === 'meetings' && <MeetingsTab linkId={meetingLink} onLinkDone={() => setMeetingLink(null)} />}
         {tab === 'contacts' && <ContactsTab onOpen={setChat} autoFocus={focusSearch} />}
         {tab === 'audio' && <AudioTab />}
         {tab === 'settings' && <SettingsTab username={username} avatar={avatar} onAvatarChange={onAvatarChange} onUsernameChange={onUsernameChange} onLogout={onLogout} />}

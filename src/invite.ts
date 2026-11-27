@@ -52,3 +52,55 @@ export async function shareProfile(username: string): Promise<'shared' | 'copied
     return 'failed'
   }
 }
+
+// ---- meeting links: https://kinspirit.vercel.app/m/<meeting id> ----
+const MKEY = 'kinspirit.meeting'
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export const meetingLink = (id: string) => `${location.origin}/m/${id}`
+
+/** Called once at start: remembers which meeting the link was for, so it survives signing up or logging in. */
+export function captureMeeting(): void {
+  try {
+    const m = location.pathname.match(/^\/m\/([0-9a-fA-F-]{36})\/?$/)
+    if (m && UUID.test(m[1])) {
+      localStorage.setItem(MKEY, m[1].toLowerCase())
+      history.replaceState(null, '', '/')
+    }
+  } catch {
+    /* storage blocked: the link just opens the app */
+  }
+}
+export function pendingMeeting(): string | null {
+  try {
+    return localStorage.getItem(MKEY)
+  } catch {
+    return null
+  }
+}
+export function clearPendingMeeting(): void {
+  try {
+    localStorage.removeItem(MKEY)
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function shareMeeting(title: string, whenText: string, id: string): Promise<'shared' | 'copied' | 'failed'> {
+  const url = meetingLink(id)
+  const text = `Join my Kinspirit meeting "${title}" (${whenText}): ${url}`
+  try {
+    if (navigator.share) {
+      await navigator.share({ title, text, url })
+      return 'shared'
+    }
+  } catch (e) {
+    if ((e as Error).name === 'AbortError') return 'failed'
+  }
+  try {
+    await navigator.clipboard.writeText(text)
+    return 'copied'
+  } catch {
+    return 'failed'
+  }
+}

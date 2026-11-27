@@ -578,3 +578,41 @@ export const whoTyping = async (cid: string) => (await db.rpc<{ username: string
 export const markDelivered = async () => void (await db.rpc<unknown>('mark_delivered', {}))
 export const profileByUsername = async (u: string): Promise<Person | null> =>
   (await db.rpc<Person[]>('profile_by_username', { u }))[0] ?? null
+
+// ---- scheduled meetings ----
+export type MeetingState = 'cancelled' | 'upcoming' | 'open' | 'ended'
+export type Meeting = {
+  id: string
+  title: string
+  starts_at: string
+  duration_min: number
+  host_id: string
+  host_username: string
+  is_host: boolean
+  invited?: number
+  state: MeetingState
+}
+
+const MEETING_ERRORS: Record<string, string> = {
+  meeting_title: 'Give the meeting a name (up to 80 letters).',
+  meeting_length: 'A meeting can last from 5 minutes to 8 hours.',
+  meeting_time: 'Pick a time that has not passed yet, within the next year.',
+  meeting_too_many: 'You have too many meetings scheduled. Cancel one first.',
+  meeting_too_big: 'A meeting can invite up to 149 people.',
+}
+
+export async function createMeeting(m: { title: string; startsAt: Date; minutes: number; invitees: string[] }): Promise<string> {
+  try {
+    return await db.rpc<string>('create_meeting', { t: m.title, starts: m.startsAt.toISOString(), mins: m.minutes, invitees: m.invitees })
+  } catch (e) {
+    if (e instanceof ApiError) {
+      const hit = Object.keys(MEETING_ERRORS).find((k) => e.raw.includes(k))
+      if (hit) throw new ApiError(hit, MEETING_ERRORS[hit], e.status)
+    }
+    throw e
+  }
+}
+export const myMeetings = () => db.rpc<Meeting[]>('my_meetings', {})
+export const meetingDetails = async (mid: string): Promise<Meeting | null> =>
+  (await db.rpc<Meeting[]>('meeting_details', { mid }))[0] ?? null
+export const cancelMeeting = async (mid: string) => void (await db.rpc<unknown>('cancel_meeting', { mid }))

@@ -25,6 +25,7 @@ export type CallState = {
   callId: string
   isCaller: boolean
   direct: boolean
+  meeting: boolean // a scheduled meeting: people join with a link, nobody is rung
   open: boolean // the full call screen is showing
   cid: string
   title: string
@@ -52,6 +53,7 @@ const idle: CallState = {
   callId: '',
   isCaller: false,
   direct: false,
+  meeting: false,
   open: false,
   cid: '',
   title: '',
@@ -177,13 +179,13 @@ function cleanup(reason = '') {
 
 // ---------- joining and leaving ----------
 
-export type CallTarget = { id: string; name: string; kind?: 'direct' | 'group' }
+export type CallTarget = { id: string; name: string; kind?: 'direct' | 'group'; meeting?: boolean }
 
 const KEEP = 'kinspirit.activecall'
 /** Remember the running call so a refresh (or the browser closing the page) does not lose it. */
 function rememberCall() {
   try {
-    localStorage.setItem(KEEP, JSON.stringify({ cid: st.cid, title: st.title, direct: st.direct, callId: st.callId, at: Date.now() }))
+    localStorage.setItem(KEEP, JSON.stringify({ cid: st.cid, title: st.title, direct: st.direct, meeting: st.meeting, callId: st.callId, at: Date.now() }))
   } catch {
     /* storage blocked */
   }
@@ -384,7 +386,7 @@ export async function joinCall(chat: CallTarget, opts: { caller?: boolean; callI
     if (st.cid === chat.id) return set({ open: true })
     return set({ error: 'You are already in another call. Leave it first.', open: false })
   }
-  set({ ...idle, phase: 'connecting', open: true, cid: chat.id, title: chat.name, direct: chat.kind !== 'group', callId: opts.callId ?? '' })
+  set({ ...idle, phase: 'connecting', open: true, cid: chat.id, title: chat.name, direct: chat.kind !== 'group', meeting: !!chat.meeting, callId: opts.callId ?? '' })
   try {
     // Get the pass first: if calls are not working, nobody is rung for nothing.
     const pass = await openRoom(chat.id)
@@ -423,7 +425,7 @@ export async function joinCall(chat: CallTarget, opts: { caller?: boolean; callI
 /** After a page refresh: go back into the call that was running, if it is still going. */
 export async function resumeCall() {
   if (st.phase !== 'idle') return
-  let saved: { cid: string; title: string; direct: boolean; callId: string; at: number } | null = null
+  let saved: { cid: string; title: string; direct: boolean; meeting?: boolean; callId: string; at: number } | null = null
   try {
     saved = JSON.parse(localStorage.getItem(KEEP) ?? 'null')
   } catch {
@@ -440,7 +442,7 @@ export async function resumeCall() {
   } catch {
     return // no internet right now; keep it and try on the next start
   }
-  await joinCall({ id: saved.cid, name: saved.title, kind: saved.direct ? 'direct' : 'group' }, { callId: saved.callId, resume: true })
+  await joinCall({ id: saved.cid, name: saved.title, kind: saved.direct ? 'direct' : 'group', meeting: saved.meeting }, { callId: saved.callId, resume: true })
 }
 
 /** One-to-one: when either person presses End, the other one's call ends too (quickly, within seconds). */

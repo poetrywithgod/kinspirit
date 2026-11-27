@@ -751,6 +751,45 @@ begin
 end;
 $$;
 
+-- 11b. Scheduled meetings ---------------------------------------------------------------
+-- A meeting has its own room (its id). Anyone who has the link can join while it is open; the people the
+-- host invited also see it in their Meetings tab. Tables are closed: everything goes through functions.
+create table if not exists public.meetings (
+  id            uuid primary key default gen_random_uuid(),
+  host_id       uuid not null references public.profiles (id) on delete cascade,
+  title         text not null check (char_length(title) between 1 and 80),
+  starts_at     timestamptz not null,
+  duration_min  int not null default 60 check (duration_min between 5 and 480),
+  cancelled_at  timestamptz,
+  created_at    timestamptz not null default now()
+);
+create index if not exists meetings_host_idx on public.meetings (host_id, starts_at);
+alter table public.meetings enable row level security;
+
+create table if not exists public.meeting_invites (
+  meeting_id uuid not null references public.meetings (id) on delete cascade,
+  user_id    uuid not null references public.profiles (id) on delete cascade,
+  primary key (meeting_id, user_id)
+);
+create index if not exists meeting_invites_user_idx on public.meeting_invites (user_id);
+alter table public.meeting_invites enable row level security;
+
+-- cancelled | upcoming (too early to enter) | open | ended
+create or replace function public.meeting_state(mid uuid)
+returns text
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select case
+    when m.cancelled_at is not null then 'cancelled'
+    when now() < m.starts_at - interval '10 minutes' then 'upcoming'
+    when now() < m.starts_at + make_interval(mins => m.duration_min) + interval '3 hours' then 'open'
+    else 'ended' end
+  from public.meetings m where m.id = mid;
+$$;
+
 -- 12. Calls ---------------------------------------------------------------------------
 -- Invitations to join a call that is already running ("add someone"). The invited person gets a ring,
 -- and may enter the call's room even though they are not a member of that chat.
@@ -785,7 +824,14 @@ as $$
   join public.profiles p on p.id = i.user_id
   where i.conversation_id = cid and i.user_id = auth.uid()
     and i.status in ('ringing', 'answered') and i.created_at > now() - interval '12 hours'
-    and not exists (select 1 from public.conversation_members x where x.conversation_id = cid and x.user_id = auth.uid());
+    and not exists (select 1 from public.conversation_members x where x.conversation_id = cid and x.user_id = auth.uid())
+  union all
+  -- a scheduled meeting: the host any time, everyone else while it is open
+  select case when mt.host_id = auth.uid() then 'host' else 'member' end, p.username
+  from public.meetings mt
+  join public.profiles p on p.id = auth.uid()
+  where mt.id = cid and mt.cancelled_at is null
+    and (mt.host_id = auth.uid() or public.meeting_state(mt.id) = 'open');
 $$;
 
 -- A call is a chat message (kind 'call') that carries its own status.
@@ -1365,13 +1411,86 @@ begin
 end;
 $$;
 
+-- 15b. Meeting functions -------------------------------------------------------------------
+create or replace function public.create_meeting(t text, starts timestamptz, mins int, invitees uuid[] default '{}')
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare me uuid := auth.uid(); mid uuid; u uuid; title text := btrim(coalesce(t, ''));
+begin
+  if me is null then raise exception 'not signed in'; end if;
+  if char_length(title) < 1 or char_length(title) > 80 then raise exception 'meeting_title'; end if;
+  if mins is null or mins < 5 or mins > 480 then raise exception 'meeting_length'; end if;
+  if starts is null or starts < now() - interval '5 minutes' or starts > now() + interval '365 days' then
+    raise exception 'meeting_time';
+  end if;
+  if (select count(*) from public.meetings x where x.host_id = me and x.cancelled_at is null and x.starts_at > now() - interval '1 day') >= 30 then
+    raise exception 'meeting_too_many';
+  end if;
+  if coalesce(array_length(invitees, 1), 0) > 149 then raise exception 'meeting_too_big'; end if;
+  insert into public.meetings (host_id, title, starts_at, duration_min) values (me, title, starts, mins) returning id into mid;
+  foreach u in array coalesce(invitees, '{}') loop
+    if u <> me and exists (select 1 from public.profiles p where p.id = u) and not public.is_blocked_between(me, u) then
+      insert into public.meeting_invites (meeting_id, user_id) values (mid, u) on conflict do nothing;
+    end if;
+  end loop;
+  return mid;
+end;
+$$;
+
+-- The meetings I host or am invited to: coming up, running, or just finished.
+create or replace function public.my_meetings()
+returns table (id uuid, title text, starts_at timestamptz, duration_min int, host_id uuid, host_username text,
+               is_host boolean, invited int, state text)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select m.id, m.title, m.starts_at, m.duration_min, m.host_id, p.username, m.host_id = auth.uid(),
+         (select count(*)::int from public.meeting_invites i where i.meeting_id = m.id),
+         public.meeting_state(m.id)
+  from public.meetings m
+  join public.profiles p on p.id = m.host_id
+  where (m.host_id = auth.uid() or exists (select 1 from public.meeting_invites i where i.meeting_id = m.id and i.user_id = auth.uid()))
+    and m.starts_at + make_interval(mins => m.duration_min) > now() - interval '3 hours'
+    and (m.cancelled_at is null or m.cancelled_at > now() - interval '3 days')
+  order by m.starts_at;
+$$;
+
+-- Details for one meeting, for anyone who holds its link (the id is a long random code).
+create or replace function public.meeting_details(mid uuid)
+returns table (id uuid, title text, starts_at timestamptz, duration_min int, host_id uuid, host_username text,
+               is_host boolean, state text)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select m.id, m.title, m.starts_at, m.duration_min, m.host_id, p.username, m.host_id = auth.uid(), public.meeting_state(m.id)
+  from public.meetings m join public.profiles p on p.id = m.host_id
+  where m.id = mid and auth.uid() is not null;
+$$;
+
+create or replace function public.cancel_meeting(mid uuid)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.meetings set cancelled_at = now() where id = mid and host_id = auth.uid() and cancelled_at is null;
+$$;
+
 -- 16. Function access (one place, for every function) -----------------------------------------
 -- Only signed-in users may run these.
 do $$
 declare f text;
 begin
   foreach f in array array[
-    'username_available(text)', 'username_locked_until()', 'is_member(uuid)',
+    'username_available(text)', 'username_locked_until()',
+    'meeting_state(uuid)', 'create_meeting(text, timestamptz, int, uuid[])', 'my_meetings()', 'meeting_details(uuid)', 'cancel_meeting(uuid)', 'is_member(uuid)',
     'search_profiles(text)', 'my_contacts()', 'add_contact(uuid)', 'remove_contact(uuid)',
     'start_direct_chat(uuid)', 'my_conversations()', 'mark_read(uuid)',
     'create_group(text, uuid[])', 'group_members(uuid)', 'add_group_members(uuid, uuid[])',

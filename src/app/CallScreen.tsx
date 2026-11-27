@@ -19,6 +19,7 @@ import {
 } from '../call'
 import { acceptIncoming, declineIncoming, useIncoming } from '../incoming'
 import { listContacts, type Person } from '../api'
+import { shareMeeting } from '../invite'
 import { fmtDur } from '../time'
 import { Avatar } from './Avatar'
 import { VideoTile } from './VideoTile'
@@ -209,9 +210,16 @@ export function CallLayer() {
             <SpeakerIcon />
             <span>Speaker</span>
           </button>
-          <button type="button" className="ctl" onClick={() => openAdd()}>
+          <button
+            type="button"
+            className="ctl"
+            onClick={() => {
+              if (!c.meeting) return openAdd()
+              void shareMeeting(c.title, 'happening now', c.cid).then((r) => r === 'copied' && setSoon('Meeting link copied. Send it to anyone you want to invite.'))
+            }}
+          >
             <AddPersonIcon />
-            <span>Add</span>
+            <span>{c.meeting ? 'Invite' : 'Add'}</span>
           </button>
           <button type="button" className="ctl soon" onClick={() => setSoon('Screen sharing is coming soon.')}>
             <ScreenShareIcon />

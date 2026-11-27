@@ -2373,3 +2373,18 @@ button.sender { padding: 0; border: 0; background: none; font: inherit; font-wei
 .video-tile.self { position: absolute; right: 18px; bottom: 14px; width: 28%; max-width: 120px; aspect-ratio: 3 / 4; z-index: 2; border: 2px solid rgba(255, 255, 255, 0.5); }
 .duo-state.compact { text-align: center; margin: 4px 0; }
 .ctl[aria-pressed="true"] svg { background: var(--primary); }
+
+/* ---- meetings ---- */
+.meeting-list { list-style: none; margin: 0; padding: 0; }
+.meeting-card { margin-bottom: 12px; }
+.meeting-card p { margin: 6px 0 12px; }
+.meeting-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.live-chip { background: #1f9d55; color: #fff; border-radius: 999px; padding: 2px 10px; font: 600 12px var(--font-body); }
+.list-head { font: 600 14px var(--font-heading); margin: 18px 6px 8px; color: var(--muted, inherit); }
+.tab-title { font: 700 22px var(--font-heading); margin: 0 0 6px; }
+.field-label { display: block; font: 500 13px var(--font-body); margin: 12px 8px 4px; }
+.field-label .sheet-input { margin-top: 4px; }
+.sheet.tall { max-height: 90vh; overflow-y: auto; }
+.btn.wide { width: 100%; margin-top: 12px; }
+select.sheet-input { appearance: auto; }
+.meeting-card .sheet-actions { grid-template-columns: 1fr 1fr; }

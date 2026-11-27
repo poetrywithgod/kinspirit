@@ -10,7 +10,7 @@ import { ForgotPassword } from './screens/ForgotPassword'
 import { PasswordField } from './PasswordField'
 import { LockScreen } from './app/LockScreen'
 import { LOCK_AFTER_MS, disableLock, lockEnabledFor } from './appLock'
-import { pendingInvite } from './invite'
+import { pendingInvite, pendingMeeting } from './invite'
 import { COUNTRIES, flag, guessCountry, normalizePhone, type Country } from './phone'
 
 type Screen =
@@ -53,6 +53,7 @@ function Welcome({
             <strong>@{pendingInvite()}</strong> invited you to Kinspirit. Sign up or log in to chat with them.
           </p>
         )}
+        {pendingMeeting() && <p className="invite-line">You were invited to a meeting. Sign up or log in to join it.</p>}
         {notice && (
           <p className="notice" role="alert">
             {notice}
