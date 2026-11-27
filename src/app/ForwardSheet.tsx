@@ -1,19 +1,13 @@
 import { useEffect, useState } from 'react'
-import { ApiError, listConversations, sendMessage, type Conversation, type Message } from '../api'
+import { ApiError, listConversations, type Conversation, type Message } from '../api'
+import { forwardOne, previewOf } from '../forwardMedia'
 import { Avatar } from './Avatar'
 
 const MAX_TARGETS = 5
 
-const newId = () =>
-  typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, (c) =>
-        (Number(c) ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (Number(c) / 4)))).toString(16),
-      )
-
 const nameOf = (c: Conversation) => (c.kind === 'direct' ? `@${c.other_username ?? 'unknown'}` : (c.title ?? 'Group'))
 
-/** "Forward to…": send a copy of a text message or sticker into up to 5 other chats. */
+/** "Forward to…": send a copy of a message (text, sticker, photo, video, file, audio or voice note) into up to 5 other chats. */
 export function ForwardSheet({
   message,
   fromChat,
@@ -51,16 +45,17 @@ export function ForwardSheet({
     if (!picked.size || busy) return
     setBusy(true)
     setError('')
-    const results = await Promise.allSettled(
-      [...picked].map((cid) =>
-        sendMessage({
-          id: newId(),
-          conversation_id: cid,
-          body: message.body,
-          ...(message.kind === 'sticker' ? { kind: 'sticker' as const } : {}),
-        }),
-      ),
-    )
+    // One after the other: files can be big, and a phone should not upload five at once.
+    const ids = [...picked]
+    const results: PromiseSettledResult<void>[] = []
+    for (const cid of ids) {
+      try {
+        await forwardOne(message, cid)
+        results.push({ status: 'fulfilled', value: undefined })
+      } catch (e) {
+        results.push({ status: 'rejected', reason: e })
+      }
+    }
     const failed = results.filter((r) => r.status === 'rejected')
     if (failed.length === 0) {
       onDone(picked.size === 1 ? 'Message forwarded.' : `Message forwarded to ${picked.size} chats.`)
@@ -75,7 +70,6 @@ export function ForwardSheet({
         : `Forwarded to ${results.length - failed.length}, but ${failed.length} failed. Pick those again to retry.`,
     )
     // keep only the failed chats selected so a retry does not send duplicates
-    const ids = [...picked]
     setPicked(new Set(ids.filter((_, i) => results[i].status === 'rejected')))
     setBusy(false)
   }
@@ -84,7 +78,7 @@ export function ForwardSheet({
     <div className="sheet-backdrop" role="presentation" onClick={onClose}>
       <div className="sheet forward-sheet" role="dialog" aria-label="Forward message" onClick={(e) => e.stopPropagation()}>
         <p className="sheet-title">Forward to…</p>
-        <p className="muted forward-preview">{message.kind === 'sticker' ? message.body : message.body.slice(0, 140)}</p>
+        <p className="muted forward-preview">{previewOf(message)}</p>
         <input className="sheet-input" placeholder="Search chats" aria-label="Search chats" value={q} onChange={(e) => setQ(e.target.value)} />
         <div className="forward-list">
           {list === null && <p className="muted">Loading…</p>}
@@ -109,7 +103,7 @@ export function ForwardSheet({
             Cancel
           </button>
           <button type="button" className="btn" onClick={() => void send()} disabled={busy || picked.size === 0}>
-            {busy ? 'Sending…' : picked.size ? `Send (${picked.size})` : 'Send'}
+            {busy ? (message.kind && message.kind !== 'text' && message.kind !== 'sticker' ? 'Uploading…' : 'Sending…') : picked.size ? `Send (${picked.size})` : 'Send'}
           </button>
         </div>
       </div>

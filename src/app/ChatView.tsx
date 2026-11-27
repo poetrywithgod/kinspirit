@@ -31,6 +31,7 @@ import { Avatar } from './Avatar'
 import type { ChatTarget } from './ChatsTab'
 import { FileIcon, ImageIcon, BackIcon, ChevronDownIcon, ClipIcon, CloseIcon, CopyIcon, EditIcon, MicIcon, PhoneIcon, ReplyIcon, TrashIcon, DownloadIcon, MusicIcon, PauseIcon, PlayIcon, SendIcon, ForwardIcon, SearchIcon } from './icons'
 import { ForwardSheet } from './ForwardSheet'
+import { canForward } from '../forwardMedia'
 import { ChatSearch } from './ChatSearch'
 import { markChatReadLocally, refreshConversations } from '../unread'
 
@@ -1129,7 +1130,7 @@ export function ChatView({
             >
               <ReplyIcon /> Reply
             </button>
-            {(menu.kind === 'text' || menu.kind === 'sticker') && (
+            {canForward(menu) && (
               <button
                 type="button"
                 role="menuitem"
