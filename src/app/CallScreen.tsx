@@ -185,7 +185,7 @@ export function CallLayer() {
           <div className={`duo-avatar${other?.speaking ? ' speaking' : ''}${c.dial !== 'none' || connecting ? ' calling' : ''}`}>
             <span className="duo-ring" aria-hidden="true" />
             <span className="duo-ring r2" aria-hidden="true" />
-            <Avatar src={null} name={c.title.replace(/^@/, '')} size={132} />
+            <Avatar src={other?.avatar ?? null} name={c.title.replace(/^@/, '')} size={132} />
           </div>
           <p className="duo-name">{c.title}</p>
           <p className="duo-state">
@@ -211,7 +211,7 @@ export function CallLayer() {
         <ul className="people">
           {c.people.map((p) => (
             <li key={p.id} className={`person-row${p.speaking ? ' speaking' : ''}`}>
-              <Avatar src={null} name={p.name} size={46} />
+              <Avatar src={p.avatar} name={p.name} size={46} />
               <span className="row-main">
                 <span className="row-name">
                   @{p.name}

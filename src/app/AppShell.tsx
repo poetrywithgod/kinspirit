@@ -189,11 +189,10 @@ function Shell({
     <ProfileView
       person={invited}
       onClose={() => setInvited(null)}
-      onMessage={(p) => {
+      onMessage={async (p) => {
+        const id = await startChat(p.id) // a failure shows on the profile, which stays open
         setInvited(null)
-        void startChat(p.id)
-          .then((id) => setChat({ id, name: `@${p.username}`, avatar: p.avatar_url, kind: 'direct', userId: p.id }))
-          .catch(() => undefined)
+        setChat({ id, name: `@${p.username}`, avatar: p.avatar_url, kind: 'direct', userId: p.id })
       }}
     />
   )

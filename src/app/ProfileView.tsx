@@ -17,7 +17,7 @@ export function ProfileView({
 }: {
   person: Person
   onClose: () => void
-  onMessage?: (p: Person) => void
+  onMessage?: (p: Person) => void | Promise<void>
 }) {
   const [since, setSince] = useState<string | null>(null)
   const [photo, setPhoto] = useState(false)
@@ -45,8 +45,11 @@ export function ProfileView({
     setOpening(call ? 'call' : 'chat')
     setErr('')
     try {
-      if (!call && onMessage) onMessage(person)
+      if (!call && onMessage) await onMessage(person)
       else await openDirect(person, { call })
+      // If this profile was opened from inside the chat with that very person, the chat is already
+      // showing behind it: close the profile so the person lands in the chat.
+      onClose()
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : 'Could not open the chat. Try again.')
     }

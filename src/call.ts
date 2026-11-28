@@ -14,12 +14,12 @@ import {
   type VideoTrack,
 } from 'livekit-client'
 import { dataSaver } from './dataSaver'
-import { ApiError, type CallPass, answerCall, inviteToCall, callHost, callPass, callRow, callStatus, endCall, startCallRpc } from './api'
+import { ApiError, type CallPass, answerCall, avatarsFor, inviteToCall, callHost, callPass, callRow, callStatus, endCall, startCallRpc } from './api'
 import { addLocalAudio } from './library'
 import { EXTENSION, LABEL, RECORDER_TYPES, getRecFormat, resolveRecFormat, type RecFormat } from './recfmt'
 import { canEncodeMp3, startMp3, type Mp3Stream } from './mp3'
 
-export type Row = { id: string; name: string; muted: boolean; speaking: boolean; host: boolean; me: boolean; away: boolean; video: boolean; sharing: boolean }
+export type Row = { id: string; name: string; muted: boolean; speaking: boolean; host: boolean; me: boolean; away: boolean; video: boolean; sharing: boolean; avatar: string | null }
 export type CallState = {
   phase: 'idle' | 'connecting' | 'live'
   dial: 'none' | 'calling' | 'ringing' // the caller is waiting for the other side
@@ -106,6 +106,22 @@ const roleOf = (p: Participant): 'host' | 'member' => {
   }
 }
 
+// Profile photos of the people in the call, looked up once and kept (photos change rarely).
+const avatarCache = new Map<string, string | null>()
+const avatarAsked = new Set<string>()
+
+function loadAvatars(ids: string[]) {
+  const need = ids.filter((i) => !avatarCache.has(i) && !avatarAsked.has(i))
+  if (!need.length) return
+  need.forEach((i) => avatarAsked.add(i))
+  void avatarsFor(need)
+    .then((m) => {
+      m.forEach((url, id) => avatarCache.set(id, url))
+      refresh()
+    })
+    .catch(() => need.forEach((i) => avatarAsked.delete(i))) // try again at the next refresh
+}
+
 function refresh() {
   if (!room) return
   window.clearTimeout(refreshTimer)
@@ -123,9 +139,11 @@ function refresh() {
         away: awayIds.has(p.identity),
         video: p.isCameraEnabled,
         sharing: p.isScreenShareEnabled,
+        avatar: avatarCache.get(p.identity) ?? null,
       }))
       .sort((a, b) => Number(b.me) - Number(a.me) || Number(b.host) - Number(a.host) || a.name.localeCompare(b.name))
     if (people.length > 1) peerSeen = true
+    loadAvatars(people.map((p) => p.id))
     // One-to-one: if the other person disappears (closed the app, lost signal, refreshed the page) wait a while
     // for them to come back before calling it over. Pressing End ends it at once (see watchEnded).
     if (st.direct && peerSeen && people.length === 1 && st.phase === 'live') {

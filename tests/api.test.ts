@@ -59,3 +59,29 @@ describe('talking to the server', () => {
     expect(calls.every((c) => !c.url.includes('delete_my_account'))).toBe(true)
   })
 })
+
+describe('profile photos for the call screen', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    localStorage.setItem(STORE_KEY, JSON.stringify(session))
+    reloadSession()
+  })
+  const A = '11111111-1111-1111-1111-111111111111'
+  const B = '22222222-2222-2222-2222-222222222222'
+
+  it('asks for the photos of the people given, and says null for people without one', async () => {
+    fetchReturns(200, [{ id: A, avatar_url: 'https://x/a.jpg' }])
+    const m = await api.avatarsFor([A, B, A])
+    expect(m.get(A)).toBe('https://x/a.jpg')
+    expect(m.get(B)).toBeNull()
+    expect(calls).toHaveLength(1)
+    expect(calls[0].url).toContain(`id=in.(${A},${B})`)
+  })
+
+  it('never puts odd ids into the query', async () => {
+    fetchReturns(200, [])
+    const m = await api.avatarsFor(['not-an-id', 'x),id.neq.(y'])
+    expect(m.size).toBe(0)
+    expect(calls).toHaveLength(0)
+  })
+})

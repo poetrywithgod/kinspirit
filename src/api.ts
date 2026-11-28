@@ -444,6 +444,19 @@ export async function usernames(ids: string[]): Promise<Map<string, string>> {
   return out
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** Profile photos for some people, by id (people without a photo map to null). */
+export async function avatarsFor(ids: string[]): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>()
+  const clean = [...new Set(ids)].filter((i) => UUID_RE.test(i))
+  if (!clean.length) return out
+  const ps = await db.select<{ id: string; avatar_url: string | null }>(`profiles?id=in.(${clean.join(',')})&select=id,avatar_url`)
+  ps.forEach((p) => out.set(p.id, p.avatar_url))
+  clean.forEach((i) => !out.has(i) && out.set(i, null))
+  return out
+}
+
 /** Voice notes and audio files that others sent me recently, in any of my chats. */
 export async function listIncomingMedia(days = 30): Promise<Message[]> {
   const me = myId()
