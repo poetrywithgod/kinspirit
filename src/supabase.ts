@@ -193,10 +193,13 @@ function toSession(t: TokenResponse): Session {
   }
 }
 
+/** Where the emailed "confirm" link sends people: back to this app (the address they signed up on). */
+const backHere = () => `?redirect_to=${encodeURIComponent(window.location.origin)}`
+
 export const auth = {
   /** Returns the new session when the server confirms the email at once, else null (a code was emailed). */
   async signUp(email: string, password: string, metadata: Record<string, unknown>): Promise<Session | null> {
-    const data = await call<Partial<TokenResponse> & { identities?: unknown[] }>('/auth/v1/signup', {
+    const data = await call<Partial<TokenResponse> & { identities?: unknown[] }>(`/auth/v1/signup${backHere()}`, {
       body: { email, password, data: metadata },
     })
     if (data.access_token) {
@@ -218,7 +221,7 @@ export const auth = {
   },
 
   async resendSignupCode(email: string): Promise<void> {
-    await call('/auth/v1/resend', { body: { type: 'signup', email } })
+    await call(`/auth/v1/resend${backHere()}`, { body: { type: 'signup', email } })
   },
 
   /** Ends the session on the server (best effort) and forgets it on this device. */
