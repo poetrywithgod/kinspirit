@@ -187,8 +187,6 @@ export function ChatView({
     recentCall && !inThisCall,
   )
   const [rec, setRec] = useState<Recording | null>(null)
-  const [starting, setStarting] = useState(false) // the mic was pressed; the microphone is still waking up
-  const cancelStart = useRef(false)
   const [recSecs, setRecSecs] = useState(0)
   const [levels, setLevels] = useState<number[]>([])
   const [holding, setHolding] = useState(false) // finger still on the mic button
@@ -652,30 +650,16 @@ export function ChatView({
   useEffect(() => {
     recRef.current = rec
   }, [rec])
-  useEffect(
-    () => () => {
-      cancelStart.current = true
-      recRef.current?.cancel()
-    },
-    [],
-  )
+  useEffect(() => () => recRef.current?.cancel(), [])
 
   const beginVoice = async () => {
-    if (starting || recRef.current) return
     setError('')
-    cancelStart.current = false
-    setStarting(true) // the recording bar shows straight away, before the microphone is ready
-    try { navigator.vibrate?.(12) } catch { /* no vibration here */ }
     try {
-      const r = await startRecording()
-      if (cancelStart.current) r.cancel() // let go / slid to cancel before it was ready
-      else setRec(r)
+      setRec(await startRecording())
     } catch (e) {
       hold.current = null
       setHolding(false)
       setError(e instanceof ApiError ? e.message : 'Could not start recording.')
-    } finally {
-      setStarting(false)
     }
   }
 
@@ -694,7 +678,6 @@ export function ChatView({
       setSlide(Math.min(0, dx))
       if (dx < -110) {
         end()
-        cancelStart.current = true
         recRef.current?.cancel()
         setRec(null)
         setHolding(false)
@@ -1251,14 +1234,13 @@ export function ChatView({
             Profile
           </button>
         </div>
-      ) : rec || starting ? (
+      ) : rec ? (
         <div className={`composer recording${holding ? ' holding' : ''}`} role="status" aria-label="Recording a voice note">
           {holding ? (
             <span className="rec-lock" aria-hidden="true">▲ slide up to lock</span>
           ) : (
             <button type="button" className="icon-btn" aria-label="Cancel recording" onClick={() => {
-                cancelStart.current = true
-                rec?.cancel()
+                rec.cancel()
                 setRec(null)
               }}>
               <TrashIcon />
@@ -1276,7 +1258,7 @@ export function ChatView({
               ◀ slide to cancel
             </span>
           ) : (
-            <button type="button" className="send" aria-label="Send voice note" disabled={!rec} onClick={() => void finishVoice()}>
+            <button type="button" className="send" aria-label="Send voice note" onClick={() => void finishVoice()}>
               <SendIcon />
             </button>
           )}
