@@ -123,8 +123,8 @@ export function SettingsTab({
         <div>
           <p className="row-name">@{username}</p>
           <p className="muted">{photoBusy ? 'Saving your photo…' : 'Tap your photo to change it'}</p>
-          {photoMsg && <p className={photoMsg === 'Photo updated.' ? 'muted' : 'error'}>{photoMsg}</p>}
         </div>
+        {photoMsg && <p className={`profile-msg ${photoMsg === 'Photo updated.' ? 'muted' : 'error'}`}>{photoMsg}</p>}
       </div>
 
       <AccountCard username={username} onUsernameChange={onUsernameChange} />
@@ -365,6 +365,9 @@ export function SettingsTab({
           {out ? 'Logging out…' : 'Log out'}
         </button>
       </div>
+      <p className="muted small center" aria-label="App version">
+        App version {typeof __BUILD_TIME__ === 'string' ? new Date(__BUILD_TIME__).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : ''}
+      </p>
     </section>
   )
 }

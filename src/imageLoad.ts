@@ -14,9 +14,12 @@ export async function loadImage(file: Blob): Promise<Loaded> {
   const url = URL.createObjectURL(file)
   try {
     const img = new Image()
-    img.decoding = 'async'
-    img.src = url
-    await img.decode()
+    // onload works on every iPhone; decode() is missing or flaky on older ones.
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve()
+      img.onerror = () => reject(new Error('unreadable picture'))
+      img.src = url
+    })
     return { source: img, width: img.naturalWidth, height: img.naturalHeight, close: () => URL.revokeObjectURL(url) }
   } catch (e) {
     URL.revokeObjectURL(url)
